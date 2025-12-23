@@ -1,0 +1,58 @@
+{
+  "id": "session-1766471271257",
+  "projectId": "763a3673-f60c-41b9-893e-7ac06afb85cb",
+  "title": "what is this codebase",
+  "messages": [
+    {
+      "id": "msg-1766471276698",
+      "role": "user",
+      "content": "what is this codebase",
+      "timestamp": "2025-12-23T06:27:56.698Z"
+    },
+    {
+      "id": "msg-1766471310992",
+      "role": "assistant",
+      "content": "I'll help you understand this codebase. Let me start by exploring the structure and key files.\n## AI Clone Video Generator\nThis is an **AI-powered video generation web application** that creates talking head videos with lip-sync. Here's what it does:\n### 🎯 Core Purpose\nGenerate realistic AI talking head videos by:\n1. Writing/uploading scripts\n2. Creating custom avatar scenes with AI\n3. Generating voiceovers using voice clones (ElevenLabs)\n4. Producing lip-synced videos (Kie.ai)\n### 🏗️ Architecture\n**Frontend** (React + Vite):\n- React 18 with Vite for fast development\n- TailwindCSS for styling\n- Zustand for state management\n- IndexedDB for local storage (all data stays in browser)\n- Libraries: axios, react-dropzone, react-hot-toast, react-router-dom\n**Backend** (Express):\n- Node.js/Express API server\n- Acts as a proxy for external APIs\n- Multer for file uploads\n- Mock mode for development without API keys\n### 🔌 External APIs\n- **Kie.ai**: Scene generation and video lip-sync\n- **ElevenLabs**: Voice cloning and text-to-speech\n### 📁 Key Structure\n```\n├── backend/\n│   ├── routes/          # API endpoints\n│   ├── utils/           # API clients & mock data\n│   └── server.js        # Express server\n├── frontend/src/\n│   ├── components/      # React UI components\n│   ├── stores/          # Zustand state management\n│   └── utils/           # Database & API utilities\n└── docs/                # User & developer guides\n```\n### 🔑 Key Features\n- 4-step workflow: Script → Scene → Voiceover → Video\n- Local-first (no server storage)\n- Project management (save/resume)\n- Mock mode for development\n- Privacy-focused (all data in browser)\nThis is essentially a **no-code video creation tool** that lets users create professional AI talking head videos without video editing skills.",
+      "timestamp": "2025-12-23T06:28:30.992Z",
+      "toolsUsed": [
+        {
+          "name": "Bash",
+          "input": "",
+          "timestamp": "2025-12-23T06:28:08.673Z"
+        },
+        {
+          "name": "Bash",
+          "input": "",
+          "timestamp": "2025-12-23T06:28:09.150Z"
+        },
+        {
+          "name": "Read",
+          "input": "...yanodonnell/projects/AI_Clones_webapp/README.md",
+          "timestamp": "2025-12-23T06:28:12.903Z"
+        },
+        {
+          "name": "Bash",
+          "input": "",
+          "timestamp": "2025-12-23T06:28:13.924Z"
+        },
+        {
+          "name": "Read",
+          "input": "...projects/AI_Clones_webapp/frontend/package.json",
+          "timestamp": "2025-12-23T06:28:17.369Z"
+        },
+        {
+          "name": "Read",
+          "input": ".../projects/AI_Clones_webapp/backend/package.json",
+          "timestamp": "2025-12-23T06:28:17.760Z"
+        },
+        {
+          "name": "Bash",
+          "input": "",
+          "timestamp": "2025-12-23T06:28:18.425Z"
+        }
+      ]
+    }
+  ],
+  "createdAt": "2025-12-23T06:27:51.257Z",
+  "updatedAt": "2025-12-23T06:28:30.992Z"
+}

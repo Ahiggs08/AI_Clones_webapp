@@ -81,6 +81,10 @@ const generateSceneWithKie = async (apiKey, referenceImageUrl, prompt, orientati
 const generateVideoWithKie = async (apiKey, sceneImageUrl, audioUrl, prompt = 'A person speaking naturally') => {
   const client = createKieClient(apiKey);
   
+  // #region agent log
+  fetch('http://127.0.0.1:7243/ingest/57a953ad-f297-4299-aa9e-edc4fad06b28',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'apiClients.js:generateVideoWithKie',message:'Starting video generation',data:{apiKeyPrefix:apiKey?.substring(0,12),sceneImageUrl,audioUrl},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
+  
   // List of lip sync models to try (in order of preference)
   // Correct model name from docs: infinitalk/from-audio
   const modelsToTry = [
@@ -94,10 +98,13 @@ const generateVideoWithKie = async (apiKey, sceneImageUrl, audioUrl, prompt = 'A
   for (const { model, name } of modelsToTry) {
     try {
       console.log(`[Kie.ai] Trying video generation with model: ${model}`);
+      // #region agent log
+      fetch('http://127.0.0.1:7243/ingest/57a953ad-f297-4299-aa9e-edc4fad06b28',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'apiClients.js:tryModel',message:'Trying model',data:{model,name},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       const response = await client.post('/api/v1/jobs/createTask', {
         model: model,
         input: {
-    image_url: sceneImageUrl,
+          image_url: sceneImageUrl,
           audio_url: audioUrl,
           prompt,
           resolution: '480p'
