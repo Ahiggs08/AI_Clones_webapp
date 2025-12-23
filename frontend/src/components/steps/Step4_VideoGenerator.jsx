@@ -43,10 +43,11 @@ function Step4_VideoGenerator() {
     setGeneratedVideo(null);
 
     try {
-      // Start video generation
+      // Start video generation - send audio as base64 data
       const { jobId } = await generateVideo({
         sceneImageUrl: selectedScene.imageUrl,
-        audioUrl: voiceover.audioUrl,
+        audioData: voiceover.audioData,
+        audioContentType: voiceover.contentType || 'audio/mpeg',
         kieApiKey: apiKeys.kieApiKey
       });
 
@@ -206,9 +207,7 @@ function Step4_VideoGenerator() {
                   style={{ animationDuration: '1s' }}
                 ></div>
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-lg font-display font-bold text-electric">
-                    {videoProgress}%
-                  </span>
+                  <div className="w-4 h-4 bg-electric rounded-full animate-pulse"></div>
                 </div>
               </div>
               
@@ -217,7 +216,10 @@ function Step4_VideoGenerator() {
                   Generating Your Video
                 </h3>
                 <p className="text-text-secondary text-sm">
-                  This may take a minute. Please don't close this page.
+                  This typically takes 1-3 minutes. Please don't close this page.
+                </p>
+                <p className="text-text-muted text-xs mt-2 animate-pulse">
+                  Processing with InfiniteTalk AI...
                 </p>
               </div>
 

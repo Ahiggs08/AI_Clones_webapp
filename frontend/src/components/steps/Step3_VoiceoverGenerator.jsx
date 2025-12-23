@@ -110,16 +110,21 @@ function Step3_VoiceoverGenerator() {
         elevenLabsApiKey: apiKeys.elevenLabsApiKey
       });
 
-      // Handle audio data
+      // Handle audio data - store both blob URL for playback AND base64 for video generation
       let audioUrl = result.audioUrl;
-      if (result.audioData) {
-        // Convert base64 to blob URL
-        const audioBlob = base64ToBlob(result.audioData, result.contentType || 'audio/mpeg');
+      const audioData = result.audioData;
+      const contentType = result.contentType || 'audio/mpeg';
+      
+      if (audioData) {
+        // Convert base64 to blob URL for local playback
+        const audioBlob = base64ToBlob(audioData, contentType);
         audioUrl = URL.createObjectURL(audioBlob);
       }
 
       setVoiceover({
         audioUrl,
+        audioData, // Store base64 for video generation
+        contentType, // Store content type
         voiceId: selectedVoiceId,
         duration: result.duration,
         characterCount: result.characterCount,

@@ -92,15 +92,6 @@ function Layout() {
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-white/5 py-6">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <p className="text-center text-text-muted text-sm">
-            AI Clone Video Generator • Powered by Kie.ai & ElevenLabs
-          </p>
-        </div>
-      </footer>
-
       {/* API Keys Required Modal - Cannot be dismissed */}
       {settingsLoaded && !hasRequiredApiKeys() && <ApiKeysModal />}
 

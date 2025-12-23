@@ -68,77 +68,49 @@ const generateSceneWithKie = async (apiKey, referenceImageUrl, prompt, orientati
       }
     });
     console.log('[Kie.ai] NanoBanana response status:', response.status);
-  return response.data;
+    return response.data;
   } catch (jobsError) {
     console.log('[Kie.ai] NanoBanana error:', jobsError.response?.data?.msg || jobsError.message);
     throw jobsError;
   }
 };
 
-// Kie.ai InfiniteTalk / Lip Sync - Video Generation
+// Kie.ai InfiniteTalk - Video Generation (Lip Sync)
 // Uses the unified Jobs API: POST /api/v1/jobs/createTask
-// Tries multiple model names as Kie.ai may use different naming conventions
+// Model: infinitalk/from-audio
 const generateVideoWithKie = async (apiKey, sceneImageUrl, audioUrl, prompt = 'A person speaking naturally') => {
   const client = createKieClient(apiKey);
   
-  // #region agent log
-  fetch('http://127.0.0.1:7243/ingest/57a953ad-f297-4299-aa9e-edc4fad06b28',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'apiClients.js:generateVideoWithKie',message:'Starting video generation',data:{apiKeyPrefix:apiKey?.substring(0,12),sceneImageUrl,audioUrl},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-  // #endregion
+  // Ensure prompt is never empty (API requires it)
+  const videoPrompt = prompt && prompt.trim() ? prompt : 'A person speaking naturally';
   
-  // List of lip sync models to try (in order of preference)
-  // Correct model name from docs: infinitalk/from-audio
-  const modelsToTry = [
-    { model: 'infinitalk/from-audio', name: 'InfiniteTalk From Audio' },
-    { model: 'infinitalk', name: 'InfiniteTalk' },
-    { model: 'klingai/avatar', name: 'Kling AI Avatar' },
-  ];
+  console.log('[Kie.ai] Starting video generation with infinitalk/from-audio');
+  console.log('[Kie.ai] Image URL:', sceneImageUrl);
+  console.log('[Kie.ai] Audio URL:', audioUrl);
+  console.log('[Kie.ai] Prompt:', videoPrompt);
   
-  let lastError = null;
-  
-  for (const { model, name } of modelsToTry) {
-    try {
-      console.log(`[Kie.ai] Trying video generation with model: ${model}`);
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/57a953ad-f297-4299-aa9e-edc4fad06b28',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'apiClients.js:tryModel',message:'Trying model',data:{model,name},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      const response = await client.post('/api/v1/jobs/createTask', {
-        model: model,
-        input: {
-          image_url: sceneImageUrl,
-          audio_url: audioUrl,
-          prompt,
-          resolution: '480p'
-        }
-      });
-      
-      console.log(`[Kie.ai] ${name} response:`, JSON.stringify(response.data).substring(0, 200));
-      
-      // Check for permission error
-      if (response.data.code === 401 || response.data.msg?.includes('access permissions')) {
-        console.log(`[Kie.ai] No permission for ${name}, trying next model...`);
-        lastError = new Error(`No access permission for ${name}`);
-        continue;
+  try {
+    const response = await client.post('/api/v1/jobs/createTask', {
+      model: 'infinitalk/from-audio',
+      input: {
+        image_url: sceneImageUrl,
+        audio_url: audioUrl,
+        prompt: videoPrompt
       }
-  
-  return response.data;
-    } catch (error) {
-      console.log(`[Kie.ai] ${name} error:`, error.response?.data?.msg || error.message);
-      
-      // Check for permission error in catch block
-      if (error.response?.data?.code === 401 || error.response?.data?.msg?.includes('access permissions')) {
-        lastError = new Error(`No access permission for ${name}`);
-        continue;
-      }
-      
-      lastError = error;
+    });
+    
+    console.log('[Kie.ai] InfiniteTalk response:', JSON.stringify(response.data));
+    
+    // Check for errors in response
+    if (response.data.code !== 200 && response.data.code !== 0) {
+      throw new Error(response.data.msg || 'Video generation failed');
     }
+    
+    return response.data;
+  } catch (error) {
+    console.error('[Kie.ai] InfiniteTalk error:', error.response?.data || error.message);
+    throw error;
   }
-  
-  // If all models failed, throw a descriptive error
-  throw new Error(
-    'Video generation failed: Your Kie.ai API key does not have access to any lip sync/video generation models. ' +
-    'Please check your Kie.ai account to enable access to InfiniteTalk or other video models.'
-  );
 };
 
 // Kie.ai - Check task status (works for both image and video generation)
@@ -201,4 +173,3 @@ module.exports = {
   listElevenLabsVoices,
   generateSpeechWithElevenLabs
 };
-
