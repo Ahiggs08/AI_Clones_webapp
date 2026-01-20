@@ -10,7 +10,20 @@ const voiceoverRoutes = require('./routes/voiceover');
 const videoRoutes = require('./routes/video');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3003;
+
+const defaultOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5180',
+  'http://localhost:3000'
+];
+
+const configuredOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = configuredOrigins.length > 0 ? configuredOrigins : defaultOrigins;
 
 // Create temp uploads directory
 const TEMP_UPLOADS_DIR = path.join(__dirname, 'temp-uploads');
@@ -20,7 +33,12 @@ if (!fs.existsSync(TEMP_UPLOADS_DIR)) {
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000'],
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (process.env.CORS_ALLOW_ALL === 'true') return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error(`Origin not allowed by CORS: ${origin}`));
+  },
   credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));
