@@ -1,17 +1,3 @@
-const axios = require('axios');
-
-// Kie.ai API client
-const createKieClient = (apiKey) => {
-  return axios.create({
-    baseURL: 'https://api.kie.ai',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    timeout: 120000
-  });
-};
-
 // Mock scene generation
 const generateMockScene = async (prompt, orientation) => {
   const width = orientation === 'vertical' ? 512 : 768;
@@ -27,14 +13,18 @@ const generateMockScene = async (prompt, orientation) => {
 };
 
 // Check task status
-const checkKieTaskStatus = async (client, taskId) => {
-  const response = await client.get(`/api/v1/jobs/recordInfo`, {
-    params: { taskId }
+const checkKieTaskStatus = async (apiKey, taskId) => {
+  const response = await fetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    }
   });
-  return response.data;
+  return response.json();
 };
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -78,7 +68,6 @@ module.exports = async (req, res) => {
       result = await generateMockScene(prompt, orientation);
     } else {
       console.log('[Scene] Using Kie.ai API');
-      const client = createKieClient(kieApiKey);
       
       const imageSize = orientation === 'vertical' ? '9:16' : '16:9';
       const DEFAULT_REFERENCE_URL = 'https://files.catbox.moe/vc80ln.png';
@@ -89,32 +78,37 @@ module.exports = async (req, res) => {
       }
       
       try {
-        let kieResult;
+        let requestBody;
         
         if (referenceImageUrl) {
-          // Use image-to-image with reference
-          console.log('[Scene] Using NanoBanana Edit with reference');
-          const response = await client.post('/api/v1/jobs/createTask', {
+          requestBody = {
             model: 'google/nano-banana-edit',
             input: {
               prompt,
               image_urls: [referenceImageUrl],
               image_size: imageSize
             }
-          });
-          kieResult = response.data;
+          };
         } else {
-          // Use text-to-image
-          console.log('[Scene] Using NanoBanana text-to-image');
-          const response = await client.post('/api/v1/jobs/createTask', {
+          requestBody = {
             model: 'google/nano-banana',
             input: {
               prompt,
               size: imageSize
             }
-          });
-          kieResult = response.data;
+          };
         }
+        
+        const response = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${kieApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestBody)
+        });
+        
+        const kieResult = await response.json();
         
         // Poll for result
         if ((kieResult.code === 0 || kieResult.code === 200) && kieResult.data?.taskId) {
@@ -125,7 +119,7 @@ module.exports = async (req, res) => {
             await new Promise(resolve => setTimeout(resolve, 2000));
             
             try {
-              const statusResult = await checkKieTaskStatus(client, kieResult.data.taskId);
+              const statusResult = await checkKieTaskStatus(kieApiKey, kieResult.data.taskId);
               
               if ((statusResult.code === 0 || statusResult.code === 200) && statusResult.data) {
                 const state = statusResult.data.state || statusResult.data.status;
@@ -219,4 +213,4 @@ module.exports = async (req, res) => {
       }
     });
   }
-};
+}

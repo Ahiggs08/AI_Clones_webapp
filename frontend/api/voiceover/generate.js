@@ -1,17 +1,3 @@
-const axios = require('axios');
-
-// ElevenLabs API client
-const createElevenLabsClient = (apiKey) => {
-  return axios.create({
-    baseURL: 'https://api.elevenlabs.io/v1',
-    headers: {
-      'xi-api-key': apiKey,
-      'Content-Type': 'application/json'
-    },
-    timeout: 60000
-  });
-};
-
 // Mock voiceover generation
 const generateMockVoiceover = async (script, voiceId) => {
   return {
@@ -23,7 +9,7 @@ const generateMockVoiceover = async (script, voiceId) => {
   };
 };
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -80,31 +66,52 @@ module.exports = async (req, res) => {
     
     // Use real ElevenLabs API
     console.log('[Voiceover] Generating with ElevenLabs');
-    const client = createElevenLabsClient(elevenLabsApiKey);
     
-    const response = await client.post(
-      `/text-to-speech/${voiceId}`,
-      {
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': elevenLabsApiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
         text: script,
         model_id: 'eleven_monolingual_v1',
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75
         }
-      },
-      {
-        responseType: 'arraybuffer'
-      }
-    );
+      })
+    });
     
-    // Return audio as base64
-    const base64Audio = Buffer.from(response.data).toString('base64');
+    if (!response.ok) {
+      if (response.status === 401) {
+        return res.status(401).json({
+          error: {
+            message: 'Invalid ElevenLabs API key',
+            code: 'AUTH_ERROR'
+          }
+        });
+      }
+      if (response.status === 429) {
+        return res.status(429).json({
+          error: {
+            message: 'Rate limit exceeded. Please try again later.',
+            code: 'RATE_LIMIT'
+          }
+        });
+      }
+      throw new Error(`ElevenLabs API error: ${response.status}`);
+    }
+    
+    // Get audio as array buffer and convert to base64
+    const arrayBuffer = await response.arrayBuffer();
+    const base64Audio = Buffer.from(arrayBuffer).toString('base64');
     
     res.json({
       success: true,
       data: {
         audioData: base64Audio,
-        contentType: response.headers['content-type'],
+        contentType: response.headers.get('content-type'),
         voiceId,
         characterCount: script.length,
         generatedAt: new Date().toISOString()
@@ -114,24 +121,6 @@ module.exports = async (req, res) => {
   } catch (error) {
     console.error('[Voiceover] Generation error:', error.message);
     
-    if (error.response?.status === 401) {
-      return res.status(401).json({
-        error: {
-          message: 'Invalid ElevenLabs API key',
-          code: 'AUTH_ERROR'
-        }
-      });
-    }
-    
-    if (error.response?.status === 429) {
-      return res.status(429).json({
-        error: {
-          message: 'Rate limit exceeded. Please try again later.',
-          code: 'RATE_LIMIT'
-        }
-      });
-    }
-    
     res.status(500).json({
       error: {
         message: error.message || 'Failed to generate voiceover',
@@ -139,4 +128,4 @@ module.exports = async (req, res) => {
       }
     });
   }
-};
+}

@@ -1,31 +1,12 @@
-const axios = require('axios');
-
-// Kie.ai API client
-const createKieClient = (apiKey) => {
-  return axios.create({
-    baseURL: 'https://api.kie.ai',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    timeout: 30000
-  });
-};
-
-// Mock job statuses (shared state won't work in serverless, but good for structure)
-const mockJobStatuses = {};
+// Mock job statuses
+const mockJobStartTimes = {};
 
 const checkMockVideoStatus = (jobId) => {
-  // Simulate progress
-  if (!mockJobStatuses[jobId]) {
-    mockJobStatuses[jobId] = {
-      status: 'processing',
-      progress: 0,
-      startedAt: Date.now()
-    };
+  if (!mockJobStartTimes[jobId]) {
+    mockJobStartTimes[jobId] = Date.now();
   }
   
-  const elapsed = Date.now() - mockJobStatuses[jobId].startedAt;
+  const elapsed = Date.now() - mockJobStartTimes[jobId];
   const progress = Math.min(95, Math.floor((elapsed / 10000) * 100));
   
   if (progress >= 95) {
@@ -42,7 +23,7 @@ const checkMockVideoStatus = (jobId) => {
   };
 };
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -81,13 +62,16 @@ module.exports = async (req, res) => {
 
     // Real API
     console.log('[Video] Checking status for job:', jobId);
-    const client = createKieClient(kieApiKey);
     
-    const response = await client.get('/api/v1/jobs/recordInfo', {
-      params: { taskId: jobId }
+    const response = await fetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${jobId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${kieApiKey}`,
+        'Content-Type': 'application/json'
+      }
     });
     
-    const statusResult = response.data;
+    const statusResult = await response.json();
     
     if ((statusResult.code === 0 || statusResult.code === 200) && statusResult.data) {
       const state = statusResult.data.state || statusResult.data.status;
@@ -163,4 +147,4 @@ module.exports = async (req, res) => {
       }
     });
   }
-};
+}

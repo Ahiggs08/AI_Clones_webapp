@@ -1,33 +1,10 @@
-const axios = require('axios');
-
-// Kie.ai API client
-const createKieClient = (apiKey) => {
-  return axios.create({
-    baseURL: 'https://api.kie.ai',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    timeout: 120000
-  });
-};
-
 // Mock video generation
-const mockJobStatuses = {};
-
 const startMockVideoGeneration = async () => {
   const jobId = `mock-job-${Date.now()}`;
-  
-  mockJobStatuses[jobId] = {
-    status: 'processing',
-    progress: 0,
-    startedAt: Date.now()
-  };
-  
   return { jobId };
 };
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -73,27 +50,26 @@ module.exports = async (req, res) => {
       });
     }
 
-    // For real API, we need to upload audio to a public URL first
-    // Upload audio to catbox.moe
-    const FormData = require('form-data');
+    // Upload audio to catbox.moe for public URL
+    console.log('[Video] Uploading audio to catbox.moe...');
     const audioBuffer = Buffer.from(audioData, 'base64');
+    
+    const formData = new FormData();
+    const blob = new Blob([audioBuffer], { type: audioContentType || 'audio/mpeg' });
+    formData.append('reqtype', 'fileupload');
+    formData.append('fileToUpload', blob, 'audio.mp3');
     
     let audioUrl;
     try {
-      const formData = new FormData();
-      formData.append('reqtype', 'fileupload');
-      formData.append('fileToUpload', audioBuffer, {
-        filename: 'audio.mp3',
-        contentType: audioContentType || 'audio/mpeg'
+      const uploadResponse = await fetch('https://catbox.moe/user/api.php', {
+        method: 'POST',
+        body: formData
       });
       
-      const uploadResponse = await axios.post('https://catbox.moe/user/api.php', formData, {
-        headers: formData.getHeaders(),
-        timeout: 60000
-      });
+      const uploadResult = await uploadResponse.text();
       
-      if (uploadResponse.data && typeof uploadResponse.data === 'string' && uploadResponse.data.startsWith('http')) {
-        audioUrl = uploadResponse.data.trim();
+      if (uploadResult && uploadResult.startsWith('http')) {
+        audioUrl = uploadResult.trim();
         console.log('[Video] Audio uploaded to:', audioUrl);
       } else {
         throw new Error('Failed to upload audio');
@@ -110,26 +86,34 @@ module.exports = async (req, res) => {
 
     // Generate video with Kie.ai
     console.log('[Video] Starting video generation with Kie.ai');
-    const client = createKieClient(kieApiKey);
     
-    const response = await client.post('/api/v1/jobs/createTask', {
-      model: 'infinitalk/from-audio',
-      input: {
-        image_url: sceneImageUrl,
-        audio_url: audioUrl,
-        prompt: 'A person speaking naturally'
-      }
+    const response = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${kieApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'infinitalk/from-audio',
+        input: {
+          image_url: sceneImageUrl,
+          audio_url: audioUrl,
+          prompt: 'A person speaking naturally'
+        }
+      })
     });
     
-    if ((response.data.code === 0 || response.data.code === 200) && response.data.data?.taskId) {
+    const kieResult = await response.json();
+    
+    if ((kieResult.code === 0 || kieResult.code === 200) && kieResult.data?.taskId) {
       res.json({
         success: true,
         data: {
-          jobId: response.data.data.taskId
+          jobId: kieResult.data.taskId
         }
       });
     } else {
-      throw new Error(response.data.msg || 'Video generation failed');
+      throw new Error(kieResult.msg || 'Video generation failed');
     }
     
   } catch (error) {
@@ -151,4 +135,4 @@ module.exports = async (req, res) => {
       }
     });
   }
-};
+}

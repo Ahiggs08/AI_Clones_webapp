@@ -1,17 +1,3 @@
-const axios = require('axios');
-
-// ElevenLabs API client
-const createElevenLabsClient = (apiKey) => {
-  return axios.create({
-    baseURL: 'https://api.elevenlabs.io/v1',
-    headers: {
-      'xi-api-key': apiKey,
-      'Content-Type': 'application/json'
-    },
-    timeout: 30000
-  });
-};
-
 // Mock voices for when no API key is provided
 const mockVoices = [
   {
@@ -40,7 +26,7 @@ const mockVoices = [
   }
 ];
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -64,10 +50,30 @@ module.exports = async (req, res) => {
       voices = mockVoices;
     } else {
       console.log('[Voiceover] Fetching voices from ElevenLabs');
-      const client = createElevenLabsClient(elevenLabsApiKey);
-      const response = await client.get('/voices');
       
-      voices = response.data.voices.map(voice => ({
+      const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+        method: 'GET',
+        headers: {
+          'xi-api-key': elevenLabsApiKey,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          return res.status(401).json({
+            error: {
+              message: 'Invalid ElevenLabs API key',
+              code: 'AUTH_ERROR'
+            }
+          });
+        }
+        throw new Error(`ElevenLabs API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      voices = data.voices.map(voice => ({
         voice_id: voice.voice_id,
         name: voice.name,
         preview_url: voice.preview_url,
@@ -85,15 +91,6 @@ module.exports = async (req, res) => {
   } catch (error) {
     console.error('[Voiceover] List voices error:', error.message);
     
-    if (error.response?.status === 401) {
-      return res.status(401).json({
-        error: {
-          message: 'Invalid ElevenLabs API key',
-          code: 'AUTH_ERROR'
-        }
-      });
-    }
-    
     res.status(500).json({
       error: {
         message: error.message || 'Failed to fetch voices',
@@ -101,4 +98,4 @@ module.exports = async (req, res) => {
       }
     });
   }
-};
+}
