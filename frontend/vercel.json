@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    { "source": "/api/health", "destination": "/api/health" },
+    { "source": "/api/voiceover/voices", "destination": "/api/voiceover/voices" },
+    { "source": "/api/voiceover/generate", "destination": "/api/voiceover/generate" },
+    { "source": "/api/scene/generate", "destination": "/api/scene/generate" },
+    { "source": "/api/video/generate", "destination": "/api/video/generate" },
+    { "source": "/api/video/status/:jobId", "destination": "/api/video/status/[jobId]?jobId=:jobId" }
+  ],
+  "functions": {
+    "api/**/*.js": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  }
+}
