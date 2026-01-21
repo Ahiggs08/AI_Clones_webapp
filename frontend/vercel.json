@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/api/health", "destination": "/api/health" },
+    { "source": "/api/auth/verify", "destination": "/api/auth/verify" },
     { "source": "/api/voiceover/voices", "destination": "/api/voiceover/voices" },
     { "source": "/api/voiceover/generate", "destination": "/api/voiceover/generate" },
     { "source": "/api/scene/generate", "destination": "/api/scene/generate" },

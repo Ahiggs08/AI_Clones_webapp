@@ -25,46 +25,40 @@ const checkKieTaskStatus = async (apiKey, taskId) => {
 };
 
 export default async function handler(req, res) {
-  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-kie-api-key');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: { message: 'Method not allowed', code: 'METHOD_NOT_ALLOWED' } });
+    return res.status(405).json({ error: { message: 'Method not allowed' } });
   }
 
   try {
     const { prompt, orientation = 'vertical', useDefaultReference } = req.body;
-    const kieApiKey = req.headers['x-kie-api-key'] || req.body.kieApiKey;
+    
+    // Use environment variable for API key
+    const kieApiKey = process.env.KIE_API_KEY;
 
-    // Validation
     if (!prompt || prompt.trim().length === 0) {
       return res.status(400).json({
-        error: {
-          message: 'Prompt is required',
-          code: 'VALIDATION_ERROR'
-        }
+        error: { message: 'Prompt is required', code: 'VALIDATION_ERROR' }
       });
     }
 
     if (!['vertical', 'horizontal'].includes(orientation)) {
       return res.status(400).json({
-        error: {
-          message: 'Orientation must be "vertical" or "horizontal"',
-          code: 'VALIDATION_ERROR'
-        }
+        error: { message: 'Orientation must be "vertical" or "horizontal"', code: 'VALIDATION_ERROR' }
       });
     }
 
     let result;
 
     if (!kieApiKey) {
-      console.log('[Scene] No API key provided, using mock mode');
+      console.log('[Scene] No API key configured, using mock mode');
       result = await generateMockScene(prompt, orientation);
     } else {
       console.log('[Scene] Using Kie.ai API');
@@ -83,19 +77,12 @@ export default async function handler(req, res) {
         if (referenceImageUrl) {
           requestBody = {
             model: 'google/nano-banana-edit',
-            input: {
-              prompt,
-              image_urls: [referenceImageUrl],
-              image_size: imageSize
-            }
+            input: { prompt, image_urls: [referenceImageUrl], image_size: imageSize }
           };
         } else {
           requestBody = {
             model: 'google/nano-banana',
-            input: {
-              prompt,
-              size: imageSize
-            }
+            input: { prompt, size: imageSize }
           };
         }
         
@@ -110,7 +97,6 @@ export default async function handler(req, res) {
         
         const kieResult = await response.json();
         
-        // Poll for result
         if ((kieResult.code === 0 || kieResult.code === 200) && kieResult.data?.taskId) {
           let attempts = 0;
           const maxAttempts = 60;
@@ -130,38 +116,19 @@ export default async function handler(req, res) {
                   if (statusResult.data.resultJson) {
                     try {
                       const resultData = JSON.parse(statusResult.data.resultJson);
-                      if (resultData.resultUrls && resultData.resultUrls.length > 0) {
-                        imageUrl = resultData.resultUrls[0];
-                      } else if (resultData.url) {
-                        imageUrl = resultData.url;
-                      } else if (resultData.image_url) {
-                        imageUrl = resultData.image_url;
-                      }
-                    } catch (parseError) {
-                      console.log('[Scene] Failed to parse resultJson');
-                    }
+                      imageUrl = resultData.resultUrls?.[0] || resultData.url || resultData.image_url;
+                    } catch (e) {}
                   }
                   
                   if (!imageUrl) {
                     const output = statusResult.data.output || statusResult.data.result || statusResult.data.fileUrl || statusResult.data.imageUrl;
-                    if (typeof output === 'string') {
-                      imageUrl = output;
-                    } else if (output?.image_url) {
-                      imageUrl = output.image_url;
-                    } else if (output?.url) {
-                      imageUrl = output.url;
-                    } else if (Array.isArray(output) && output[0]) {
-                      imageUrl = typeof output[0] === 'string' ? output[0] : output[0].url || output[0].image_url;
-                    }
+                    if (typeof output === 'string') imageUrl = output;
+                    else if (output?.image_url) imageUrl = output.image_url;
+                    else if (output?.url) imageUrl = output.url;
                   }
                   
                   if (imageUrl) {
-                    result = {
-                      imageUrl,
-                      prompt,
-                      orientation,
-                      generatedAt: new Date().toISOString()
-                    };
+                    result = { imageUrl, prompt, orientation, generatedAt: new Date().toISOString() };
                     break;
                   }
                 } else if (state === 'failed' || state === 'error') {
@@ -174,9 +141,7 @@ export default async function handler(req, res) {
             attempts++;
           }
           
-          if (!result) {
-            throw new Error('Image generation timed out');
-          }
+          if (!result) throw new Error('Image generation timed out');
         } else {
           throw new Error('Unexpected API response');
         }
@@ -188,29 +153,13 @@ export default async function handler(req, res) {
     
     res.json({
       success: true,
-      data: {
-        id: `scene-${Date.now()}`,
-        ...result
-      }
+      data: { id: `scene-${Date.now()}`, ...result }
     });
     
   } catch (error) {
     console.error('[Scene] Generation error:', error.message);
-    
-    if (error.response?.status === 401) {
-      return res.status(401).json({
-        error: {
-          message: 'Invalid Kie.ai API key',
-          code: 'AUTH_ERROR'
-        }
-      });
-    }
-    
     res.status(500).json({
-      error: {
-        message: error.message || 'Failed to generate scene',
-        code: 'INTERNAL_ERROR'
-      }
+      error: { message: error.message || 'Failed to generate scene', code: 'INTERNAL_ERROR' }
     });
   }
 }
