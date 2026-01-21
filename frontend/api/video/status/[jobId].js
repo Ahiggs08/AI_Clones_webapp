@@ -1,15 +1,11 @@
-// Mock job statuses
-const mockJobStartTimes = {};
-
+// Mock job statuses (note: won't persist across serverless invocations, but that's ok for mock)
 const checkMockVideoStatus = (jobId) => {
-  if (!mockJobStartTimes[jobId]) {
-    mockJobStartTimes[jobId] = Date.now();
-  }
+  // For mock, simulate completion after ~10 seconds based on job ID timestamp
+  const timestamp = parseInt(jobId.replace('mock-job-', ''));
+  const elapsed = Date.now() - timestamp;
+  const progress = Math.min(100, Math.floor((elapsed / 10000) * 100));
   
-  const elapsed = Date.now() - mockJobStartTimes[jobId];
-  const progress = Math.min(95, Math.floor((elapsed / 10000) * 100));
-  
-  if (progress >= 95) {
+  if (progress >= 100) {
     return {
       status: 'completed',
       progress: 100,
@@ -41,6 +37,8 @@ export default async function handler(req, res) {
     const { jobId } = req.query;
     const kieApiKey = req.headers['x-kie-api-key'];
 
+    console.log('[Video Status] Checking job:', jobId);
+
     if (!jobId) {
       return res.status(400).json({
         error: {
@@ -52,7 +50,7 @@ export default async function handler(req, res) {
 
     // Mock mode
     if (jobId.startsWith('mock-') || !kieApiKey) {
-      console.log('[Video] Using mock status for job:', jobId);
+      console.log('[Video Status] Using mock status');
       const status = checkMockVideoStatus(jobId);
       return res.json({
         success: true,
@@ -61,7 +59,7 @@ export default async function handler(req, res) {
     }
 
     // Real API
-    console.log('[Video] Checking status for job:', jobId);
+    console.log('[Video Status] Calling Kie.ai API');
     
     const response = await fetch(`https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${jobId}`, {
       method: 'GET',
@@ -72,64 +70,90 @@ export default async function handler(req, res) {
     });
     
     const statusResult = await response.json();
+    console.log('[Video Status] Kie.ai response:', JSON.stringify(statusResult));
     
-    if ((statusResult.code === 0 || statusResult.code === 200) && statusResult.data) {
-      const state = statusResult.data.state || statusResult.data.status;
+    // Handle various response formats
+    if (statusResult.code === 0 || statusResult.code === 200) {
+      const data = statusResult.data || {};
       
-      let result = {
-        status: 'processing',
-        progress: statusResult.data.progress || 50
-      };
+      // Kie.ai uses 'state' for status
+      const state = (data.state || data.status || '').toLowerCase();
+      const progress = data.progress || data.percent || 0;
       
-      if (state === 'completed' || state === 'success' || state === 'done') {
+      console.log('[Video Status] State:', state, 'Progress:', progress);
+      
+      // Check for completion
+      if (state === 'completed' || state === 'success' || state === 'done' || state === 'finished') {
         let videoUrl = null;
         
-        if (statusResult.data.resultJson) {
+        // Try to extract video URL from various possible locations
+        if (data.resultJson) {
           try {
-            const resultData = JSON.parse(statusResult.data.resultJson);
-            if (resultData.resultUrls && resultData.resultUrls.length > 0) {
-              videoUrl = resultData.resultUrls[0];
-            } else if (resultData.url) {
-              videoUrl = resultData.url;
-            } else if (resultData.video_url) {
-              videoUrl = resultData.video_url;
-            }
-          } catch (parseError) {
-            console.log('[Video] Failed to parse resultJson');
+            const resultData = typeof data.resultJson === 'string' 
+              ? JSON.parse(data.resultJson) 
+              : data.resultJson;
+            
+            videoUrl = resultData.resultUrls?.[0] 
+              || resultData.video_url 
+              || resultData.url 
+              || resultData.output;
+              
+            console.log('[Video Status] Parsed resultJson, videoUrl:', videoUrl);
+          } catch (e) {
+            console.log('[Video Status] Failed to parse resultJson:', e.message);
           }
         }
         
+        // Fallback to other fields
         if (!videoUrl) {
-          const output = statusResult.data.output || statusResult.data.result || statusResult.data.fileUrl || statusResult.data.videoUrl;
-          if (typeof output === 'string') {
-            videoUrl = output;
-          } else if (output?.video_url) {
-            videoUrl = output.video_url;
-          } else if (output?.url) {
-            videoUrl = output.url;
+          videoUrl = data.fileUrl 
+            || data.videoUrl 
+            || data.video_url 
+            || data.output 
+            || data.result;
+            
+          if (typeof videoUrl === 'object') {
+            videoUrl = videoUrl.url || videoUrl.video_url || null;
           }
         }
         
-        result = {
-          status: 'completed',
-          progress: 100,
-          videoUrl
-        };
-      } else if (state === 'failed' || state === 'error') {
-        result = {
-          status: 'failed',
-          progress: 0,
-          error: statusResult.data.failMsg || 'Video generation failed'
-        };
+        console.log('[Video Status] Final videoUrl:', videoUrl);
+        
+        return res.json({
+          success: true,
+          data: {
+            status: 'completed',
+            progress: 100,
+            videoUrl
+          }
+        });
       }
       
+      // Check for failure
+      if (state === 'failed' || state === 'error' || state === 'cancelled') {
+        return res.json({
+          success: true,
+          data: {
+            status: 'failed',
+            progress: 0,
+            error: data.failMsg || data.error || data.message || 'Video generation failed'
+          }
+        });
+      }
+      
+      // Still processing
       return res.json({
         success: true,
-        data: result
+        data: {
+          status: 'processing',
+          progress: Math.max(progress, 10) // Show at least 10% to indicate progress
+        }
       });
     }
     
-    res.json({
+    // Unexpected response
+    console.log('[Video Status] Unexpected response format');
+    return res.json({
       success: true,
       data: {
         status: 'processing',
@@ -138,12 +162,15 @@ export default async function handler(req, res) {
     });
     
   } catch (error) {
-    console.error('[Video] Status check error:', error.message);
+    console.error('[Video Status] Error:', error.message);
     
-    res.status(500).json({
-      error: {
-        message: error.message || 'Failed to check video status',
-        code: 'INTERNAL_ERROR'
+    // Don't fail the whole request - return processing status
+    // This allows the frontend to keep polling
+    res.json({
+      success: true,
+      data: {
+        status: 'processing',
+        progress: 25
       }
     });
   }

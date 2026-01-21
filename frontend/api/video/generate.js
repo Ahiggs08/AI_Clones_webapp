@@ -4,6 +4,40 @@ const startMockVideoGeneration = async () => {
   return { jobId };
 };
 
+// Upload audio buffer to catbox.moe using raw fetch
+const uploadToCatbox = async (base64Audio, contentType) => {
+  // Create multipart form data manually
+  const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+  const audioBuffer = Buffer.from(base64Audio, 'base64');
+  
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\n`),
+    Buffer.from(`Content-Disposition: form-data; name="reqtype"\r\n\r\n`),
+    Buffer.from(`fileupload\r\n`),
+    Buffer.from(`--${boundary}\r\n`),
+    Buffer.from(`Content-Disposition: form-data; name="fileToUpload"; filename="audio.mp3"\r\n`),
+    Buffer.from(`Content-Type: ${contentType || 'audio/mpeg'}\r\n\r\n`),
+    audioBuffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`)
+  ]);
+  
+  const response = await fetch('https://catbox.moe/user/api.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': `multipart/form-data; boundary=${boundary}`
+    },
+    body: body
+  });
+  
+  const result = await response.text();
+  
+  if (result && result.startsWith('http')) {
+    return result.trim();
+  }
+  
+  throw new Error('Catbox upload failed: ' + result);
+};
+
 export default async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -52,40 +86,25 @@ export default async function handler(req, res) {
 
     // Upload audio to catbox.moe for public URL
     console.log('[Video] Uploading audio to catbox.moe...');
-    const audioBuffer = Buffer.from(audioData, 'base64');
-    
-    const formData = new FormData();
-    const blob = new Blob([audioBuffer], { type: audioContentType || 'audio/mpeg' });
-    formData.append('reqtype', 'fileupload');
-    formData.append('fileToUpload', blob, 'audio.mp3');
     
     let audioUrl;
     try {
-      const uploadResponse = await fetch('https://catbox.moe/user/api.php', {
-        method: 'POST',
-        body: formData
-      });
-      
-      const uploadResult = await uploadResponse.text();
-      
-      if (uploadResult && uploadResult.startsWith('http')) {
-        audioUrl = uploadResult.trim();
-        console.log('[Video] Audio uploaded to:', audioUrl);
-      } else {
-        throw new Error('Failed to upload audio');
-      }
+      audioUrl = await uploadToCatbox(audioData, audioContentType);
+      console.log('[Video] Audio uploaded to:', audioUrl);
     } catch (uploadError) {
       console.error('[Video] Audio upload failed:', uploadError.message);
       return res.status(500).json({
         error: {
-          message: 'Failed to upload audio file',
+          message: 'Failed to upload audio file: ' + uploadError.message,
           code: 'UPLOAD_ERROR'
         }
       });
     }
 
-    // Generate video with Kie.ai
+    // Start video generation with Kie.ai (don't wait for completion)
     console.log('[Video] Starting video generation with Kie.ai');
+    console.log('[Video] Image URL:', sceneImageUrl);
+    console.log('[Video] Audio URL:', audioUrl);
     
     const response = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
       method: 'POST',
@@ -104,29 +123,23 @@ export default async function handler(req, res) {
     });
     
     const kieResult = await response.json();
+    console.log('[Video] Kie.ai response:', JSON.stringify(kieResult));
     
     if ((kieResult.code === 0 || kieResult.code === 200) && kieResult.data?.taskId) {
-      res.json({
+      // Return immediately with job ID - frontend will poll for status
+      return res.json({
         success: true,
         data: {
-          jobId: kieResult.data.taskId
+          jobId: kieResult.data.taskId,
+          audioUrl: audioUrl
         }
       });
     } else {
-      throw new Error(kieResult.msg || 'Video generation failed');
+      throw new Error(kieResult.msg || 'Failed to start video generation');
     }
     
   } catch (error) {
     console.error('[Video] Generation error:', error.message);
-    
-    if (error.response?.status === 401) {
-      return res.status(401).json({
-        error: {
-          message: 'Invalid Kie.ai API key',
-          code: 'AUTH_ERROR'
-        }
-      });
-    }
     
     res.status(500).json({
       error: {
