@@ -6,7 +6,6 @@ const startMockVideoGeneration = async () => {
 
 // Upload audio buffer to catbox.moe using raw fetch
 const uploadToCatbox = async (base64Audio, contentType) => {
-  // Create multipart form data manually
   const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
   const audioBuffer = Buffer.from(base64Audio, 'base64');
   
@@ -38,6 +37,48 @@ const uploadToCatbox = async (base64Audio, contentType) => {
   throw new Error('Catbox upload failed: ' + result);
 };
 
+// Upload image from URL to catbox.moe (for images that need public URLs)
+const uploadImageToCatbox = async (imageUrl) => {
+  // Fetch the image
+  const imageResponse = await fetch(imageUrl);
+  if (!imageResponse.ok) {
+    throw new Error(`Failed to fetch image: ${imageResponse.status}`);
+  }
+  
+  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+  const contentType = imageResponse.headers.get('content-type') || 'image/png';
+  
+  const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
+  const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
+  
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\n`),
+    Buffer.from(`Content-Disposition: form-data; name="reqtype"\r\n\r\n`),
+    Buffer.from(`fileupload\r\n`),
+    Buffer.from(`--${boundary}\r\n`),
+    Buffer.from(`Content-Disposition: form-data; name="fileToUpload"; filename="image.${ext}"\r\n`),
+    Buffer.from(`Content-Type: ${contentType}\r\n\r\n`),
+    imageBuffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`)
+  ]);
+  
+  const response = await fetch('https://catbox.moe/user/api.php', {
+    method: 'POST',
+    headers: {
+      'Content-Type': `multipart/form-data; boundary=${boundary}`
+    },
+    body: body
+  });
+  
+  const result = await response.text();
+  
+  if (result && result.startsWith('http')) {
+    return result.trim();
+  }
+  
+  throw new Error('Catbox image upload failed: ' + result);
+};
+
 export default async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -53,7 +94,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { sceneImageUrl, audioData, audioContentType } = req.body;
+    let { sceneImageUrl, audioData, audioContentType } = req.body;
     const kieApiKey = req.headers['x-kie-api-key'] || req.body.kieApiKey;
 
     // Validation
@@ -84,6 +125,32 @@ export default async function handler(req, res) {
       });
     }
 
+    // Convert relative image URL to full URL if needed
+    if (sceneImageUrl.startsWith('/')) {
+      // Get the host from request headers
+      const host = req.headers.host || req.headers['x-forwarded-host'];
+      const protocol = req.headers['x-forwarded-proto'] || 'https';
+      const baseUrl = `${protocol}://${host}`;
+      const fullImageUrl = `${baseUrl}${sceneImageUrl}`;
+      
+      console.log('[Video] Converting relative URL to full URL:', fullImageUrl);
+      
+      // Upload the image to catbox to get a public URL that Kie.ai can access
+      console.log('[Video] Uploading image to catbox.moe for public access...');
+      try {
+        sceneImageUrl = await uploadImageToCatbox(fullImageUrl);
+        console.log('[Video] Image uploaded to:', sceneImageUrl);
+      } catch (uploadError) {
+        console.error('[Video] Image upload failed:', uploadError.message);
+        return res.status(500).json({
+          error: {
+            message: 'Failed to upload scene image: ' + uploadError.message,
+            code: 'UPLOAD_ERROR'
+          }
+        });
+      }
+    }
+
     // Upload audio to catbox.moe for public URL
     console.log('[Video] Uploading audio to catbox.moe...');
     
@@ -101,7 +168,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // Start video generation with Kie.ai (don't wait for completion)
+    // Start video generation with Kie.ai
     console.log('[Video] Starting video generation with Kie.ai');
     console.log('[Video] Image URL:', sceneImageUrl);
     console.log('[Video] Audio URL:', audioUrl);
@@ -126,12 +193,12 @@ export default async function handler(req, res) {
     console.log('[Video] Kie.ai response:', JSON.stringify(kieResult));
     
     if ((kieResult.code === 0 || kieResult.code === 200) && kieResult.data?.taskId) {
-      // Return immediately with job ID - frontend will poll for status
       return res.json({
         success: true,
         data: {
           jobId: kieResult.data.taskId,
-          audioUrl: audioUrl
+          audioUrl: audioUrl,
+          imageUrl: sceneImageUrl
         }
       });
     } else {
