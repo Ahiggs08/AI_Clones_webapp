@@ -25,8 +25,6 @@ export default async function handler(req, res) {
 
   try {
     const { jobId } = req.query;
-    
-    // Use environment variable for API key
     const kieApiKey = process.env.KIE_API_KEY;
 
     if (!jobId) {
@@ -50,40 +48,88 @@ export default async function handler(req, res) {
     });
     
     const statusResult = await response.json();
-    console.log('[Video Status] Kie.ai response:', JSON.stringify(statusResult));
+    
+    // Log the FULL response to see what we're getting
+    console.log('[Video Status] FULL Kie.ai response:', JSON.stringify(statusResult, null, 2));
     
     if (statusResult.code === 0 || statusResult.code === 200) {
       const data = statusResult.data || {};
-      const state = (data.state || data.status || '').toLowerCase();
-      const progress = data.progress || data.percent || 0;
       
-      // Completed
-      if (['completed', 'success', 'done', 'finished'].includes(state)) {
-        let videoUrl = null;
+      // Log all the fields we're looking at
+      console.log('[Video Status] data.state:', data.state);
+      console.log('[Video Status] data.status:', data.status);
+      console.log('[Video Status] data.progress:', data.progress);
+      console.log('[Video Status] data.resultJson:', data.resultJson);
+      console.log('[Video Status] data.fileUrl:', data.fileUrl);
+      console.log('[Video Status] data.output:', data.output);
+      
+      // Try multiple ways to detect state
+      const state = (data.state || data.status || data.jobStatus || '').toString().toLowerCase();
+      const progress = data.progress || data.percent || data.percentage || 0;
+      
+      console.log('[Video Status] Detected state:', state, 'progress:', progress);
+      
+      // Check for video URL in various places - even if state isn't "completed"
+      let videoUrl = null;
+      
+      // Check resultJson first
+      if (data.resultJson) {
+        try {
+          const resultData = typeof data.resultJson === 'string' ? JSON.parse(data.resultJson) : data.resultJson;
+          console.log('[Video Status] Parsed resultJson:', JSON.stringify(resultData));
+          videoUrl = resultData.resultUrls?.[0] || resultData.video_url || resultData.videoUrl || resultData.url || resultData.output;
+        } catch (e) {
+          console.log('[Video Status] Failed to parse resultJson:', e.message);
+        }
+      }
+      
+      // Check other common fields
+      if (!videoUrl) {
+        videoUrl = data.fileUrl || data.videoUrl || data.video_url || data.outputUrl || data.output_url;
         
-        if (data.resultJson) {
-          try {
-            const resultData = typeof data.resultJson === 'string' ? JSON.parse(data.resultJson) : data.resultJson;
-            videoUrl = resultData.resultUrls?.[0] || resultData.video_url || resultData.url;
-          } catch (e) {}
+        // Check if output is a URL string
+        if (!videoUrl && data.output && typeof data.output === 'string' && data.output.startsWith('http')) {
+          videoUrl = data.output;
         }
         
-        if (!videoUrl) {
-          videoUrl = data.fileUrl || data.videoUrl || data.video_url || data.output || data.result;
-          if (typeof videoUrl === 'object') videoUrl = videoUrl.url || videoUrl.video_url;
+        // Check result field
+        if (!videoUrl && data.result) {
+          if (typeof data.result === 'string' && data.result.startsWith('http')) {
+            videoUrl = data.result;
+          } else if (data.result.url) {
+            videoUrl = data.result.url;
+          } else if (data.result.video_url) {
+            videoUrl = data.result.video_url;
+          }
         }
-        
+      }
+      
+      console.log('[Video Status] Extracted videoUrl:', videoUrl);
+      
+      // If we have a video URL, it's completed
+      if (videoUrl) {
+        console.log('[Video Status] Found video URL, returning completed');
         return res.json({
           success: true,
           data: { status: 'completed', progress: 100, videoUrl }
         });
       }
       
-      // Failed
-      if (['failed', 'error', 'cancelled'].includes(state)) {
+      // Check for explicit completion states
+      if (['completed', 'success', 'done', 'finished', 'complete'].includes(state)) {
+        console.log('[Video Status] State indicates completed but no video URL found');
+        // Return completed anyway - the video URL might come from somewhere else
         return res.json({
           success: true,
-          data: { status: 'failed', progress: 0, error: data.failMsg || 'Video generation failed' }
+          data: { status: 'completed', progress: 100, videoUrl: null }
+        });
+      }
+      
+      // Check for failure states
+      if (['failed', 'error', 'cancelled', 'failure'].includes(state)) {
+        return res.json({
+          success: true,
+          data: { status: 'failed', progress: 0, error: data.failMsg || data.errorMsg || data.message || 'Video generation failed' }
         });
       }
       
@@ -94,6 +140,8 @@ export default async function handler(req, res) {
       });
     }
     
+    // Unexpected response format
+    console.log('[Video Status] Unexpected response code:', statusResult.code);
     return res.json({ success: true, data: { status: 'processing', progress: 50 } });
     
   } catch (error) {
