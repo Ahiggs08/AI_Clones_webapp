@@ -1,16 +1,17 @@
 /**
- * Utility to split scripts into chunks that will generate ~15 second audio
+ * Utility to split scripts into chunks that will generate ~14 second audio
  * 
- * Average speaking rate: ~150 words/minute = 2.5 words/second
- * Average word length: ~5 characters
- * So roughly: 12-13 characters per second
+ * Based on actual testing:
+ * - ElevenLabs generates speech at roughly 15-16 characters per second
+ * - Kie.ai has a 15-second audio limit
+ * - We target 14 seconds to have buffer
  * 
- * For 15 seconds max: ~180 characters per chunk (with some buffer)
+ * 14 seconds × 15 chars/second = 210 characters per chunk
  */
 
-const CHARS_PER_SECOND = 12;
+const CHARS_PER_SECOND = 15;
 const MAX_DURATION_SECONDS = 14; // Slightly under 15 to be safe
-const MAX_CHARS_PER_CHUNK = CHARS_PER_SECOND * MAX_DURATION_SECONDS; // ~168 chars
+const MAX_CHARS_PER_CHUNK = 210; // ~14 seconds of audio
 
 /**
  * Estimate audio duration in seconds from text
