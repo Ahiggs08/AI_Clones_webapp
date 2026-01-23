@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 import AudioPlayer from '../AudioPlayer';
 import { generateVideo, pollVideoStatus } from '../../utils/api';
+import { stitchVideos, isFFmpegSupported } from '../../utils/videoStitcher';
 import { saveProject } from '../../utils/db';
 import useAppStore from '../../stores/useAppStore';
 
@@ -22,6 +23,8 @@ function Step4_VideoGenerator() {
     setIsGeneratingVideo,
     videoProgress,
     setVideoProgress,
+    videoStatusMessage,
+    setVideoStatusMessage,
     reset
   } = useAppStore();
 
@@ -31,7 +34,6 @@ function Step4_VideoGenerator() {
   useEffect(() => {
     setCurrentStep(4);
     
-    // Redirect if prerequisites not met
     if (!canProceedToStep4()) {
       navigate('/step/3');
     }
@@ -40,37 +42,144 @@ function Step4_VideoGenerator() {
   const handleGenerate = async () => {
     setIsGeneratingVideo(true);
     setVideoProgress(0);
+    setVideoStatusMessage('');
     setGeneratedVideo(null);
 
     try {
-      // Start video generation - send audio as base64 data
-      const { jobId } = await generateVideo({
-        sceneImageUrl: selectedScene.imageUrl,
-        audioData: voiceover.audioData,
-        audioContentType: voiceover.contentType || 'audio/mpeg',
-        kieApiKey: apiKeys.kieApiKey
-      });
-
-      // Poll for completion
-      const result = await pollVideoStatus(
-        jobId,
-        apiKeys.kieApiKey,
-        (progress) => setVideoProgress(progress)
-      );
-
-      setGeneratedVideo({
-        videoUrl: result.videoUrl,
-        jobId,
-        generatedAt: new Date().toISOString()
-      });
-
-      toast.success('Video generated successfully!');
+      // Check if we have chunked voiceover
+      if (voiceover.isChunked && voiceover.chunks && voiceover.chunks.length > 1) {
+        await handleChunkedVideoGeneration();
+      } else {
+        await handleSingleVideoGeneration();
+      }
     } catch (error) {
       console.error('Video generation error:', error);
       toast.error(error.message || 'Failed to generate video');
     } finally {
       setIsGeneratingVideo(false);
       setVideoProgress(0);
+      setVideoStatusMessage('');
+    }
+  };
+
+  const handleSingleVideoGeneration = async () => {
+    setVideoStatusMessage('Starting video generation...');
+    
+    const { jobId } = await generateVideo({
+      sceneImageUrl: selectedScene.imageUrl,
+      audioData: voiceover.audioData,
+      audioContentType: voiceover.contentType || 'audio/mpeg',
+      kieApiKey: apiKeys.kieApiKey
+    });
+
+    setVideoStatusMessage('Processing with InfiniteTalk AI...');
+    
+    const result = await pollVideoStatus(
+      jobId,
+      apiKeys.kieApiKey,
+      (progress) => setVideoProgress(progress)
+    );
+
+    setGeneratedVideo({
+      videoUrl: result.videoUrl,
+      jobId,
+      generatedAt: new Date().toISOString()
+    });
+
+    toast.success('Video generated successfully!');
+  };
+
+  const handleChunkedVideoGeneration = async () => {
+    const chunks = voiceover.chunks;
+    const totalChunks = chunks.length;
+    const videoUrls = [];
+
+    // Generate video for each chunk
+    for (let i = 0; i < totalChunks; i++) {
+      const chunk = chunks[i];
+      const chunkNum = i + 1;
+      
+      setVideoStatusMessage(`Generating video segment ${chunkNum}/${totalChunks}...`);
+      setVideoProgress((i / totalChunks) * 60); // 0-60% for video generation
+      
+      try {
+        const { jobId } = await generateVideo({
+          sceneImageUrl: selectedScene.imageUrl,
+          audioData: chunk.audioData,
+          audioContentType: chunk.contentType || 'audio/mpeg',
+          kieApiKey: apiKeys.kieApiKey
+        });
+
+        setVideoStatusMessage(`Processing segment ${chunkNum}/${totalChunks}...`);
+        
+        const result = await pollVideoStatus(
+          jobId,
+          apiKeys.kieApiKey,
+          (progress) => {
+            const baseProgress = (i / totalChunks) * 60;
+            const chunkProgress = (progress / 100) * (60 / totalChunks);
+            setVideoProgress(baseProgress + chunkProgress);
+          }
+        );
+
+        if (result.videoUrl) {
+          videoUrls.push(result.videoUrl);
+        } else {
+          throw new Error(`Segment ${chunkNum} failed: No video URL returned`);
+        }
+      } catch (error) {
+        throw new Error(`Failed to generate segment ${chunkNum}: ${error.message}`);
+      }
+    }
+
+    // Check if we got all videos
+    if (videoUrls.length !== totalChunks) {
+      throw new Error(`Only ${videoUrls.length} of ${totalChunks} segments completed`);
+    }
+
+    // Stitch videos together
+    setVideoStatusMessage('Combining video segments...');
+    setVideoProgress(65);
+
+    // Check ffmpeg support
+    if (!isFFmpegSupported()) {
+      // Fallback: just return the first video with a warning
+      toast.error('Your browser does not support video stitching. Showing first segment only.');
+      setGeneratedVideo({
+        videoUrl: videoUrls[0],
+        isPartial: true,
+        allVideoUrls: videoUrls,
+        generatedAt: new Date().toISOString()
+      });
+      return;
+    }
+
+    try {
+      const combinedBlob = await stitchVideos(videoUrls, (progress) => {
+        setVideoProgress(65 + (progress * 0.35)); // 65-100% for stitching
+      });
+
+      const combinedUrl = URL.createObjectURL(combinedBlob);
+
+      setGeneratedVideo({
+        videoUrl: combinedUrl,
+        videoBlob: combinedBlob,
+        isStitched: true,
+        segmentCount: totalChunks,
+        generatedAt: new Date().toISOString()
+      });
+
+      toast.success(`Video generated! Combined ${totalChunks} segments.`);
+    } catch (stitchError) {
+      console.error('Stitching failed:', stitchError);
+      // Fallback: offer individual downloads
+      toast.error('Failed to combine segments. You can download them individually.');
+      setGeneratedVideo({
+        videoUrl: videoUrls[0],
+        isPartial: true,
+        allVideoUrls: videoUrls,
+        generatedAt: new Date().toISOString()
+      });
     }
   };
 
@@ -78,8 +187,15 @@ function Step4_VideoGenerator() {
     if (!generatedVideo?.videoUrl) return;
 
     try {
-      const response = await fetch(generatedVideo.videoUrl);
-      const blob = await response.blob();
+      let blob;
+      
+      if (generatedVideo.videoBlob) {
+        blob = generatedVideo.videoBlob;
+      } else {
+        const response = await fetch(generatedVideo.videoUrl);
+        blob = await response.blob();
+      }
+      
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -90,6 +206,23 @@ function Step4_VideoGenerator() {
       URL.revokeObjectURL(url);
     } catch (error) {
       toast.error('Failed to download video');
+    }
+  };
+
+  const handleDownloadSegment = async (url, index) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `ai-clone-segment-${index + 1}-${Date.now()}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      toast.error(`Failed to download segment ${index + 1}`);
     }
   };
 
@@ -127,6 +260,12 @@ function Step4_VideoGenerator() {
     navigate('/step/3');
   };
 
+  // Get chunk info for display
+  const chunkInfo = voiceover?.isChunked ? {
+    count: voiceover.chunks?.length || 0,
+    estimatedTime: (voiceover.chunks?.length || 1) * 2 // ~2 min per segment
+  } : null;
+
   return (
     <div className="max-w-4xl mx-auto animate-fade-in">
       {/* Header */}
@@ -138,6 +277,26 @@ function Step4_VideoGenerator() {
           Review your selections and generate your AI clone video.
         </p>
       </div>
+
+      {/* Chunk Warning */}
+      {chunkInfo && (
+        <div className="glass-card p-4 mb-6 border border-yellow-500/30 bg-yellow-500/5">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-yellow-500 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className="text-sm text-yellow-200">
+                Your script is long and will be split into <strong>{chunkInfo.count} segments</strong>.
+              </p>
+              <p className="text-xs text-yellow-200/70 mt-1">
+                Each segment will be generated separately and combined automatically.
+                Estimated time: {chunkInfo.estimatedTime}-{chunkInfo.estimatedTime * 1.5} minutes.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid md:grid-cols-3 gap-4 mb-8">
@@ -164,7 +323,9 @@ function Step4_VideoGenerator() {
         {/* Voiceover */}
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-text-secondary">Voiceover</h3>
+            <h3 className="text-sm font-medium text-text-secondary">
+              Voiceover {chunkInfo && <span className="text-xs text-yellow-500">({chunkInfo.count} parts)</span>}
+            </h3>
             <button
               onClick={() => navigate('/step/3')}
               className="text-xs text-electric hover:text-electric-dim transition-colors"
@@ -216,11 +377,16 @@ function Step4_VideoGenerator() {
                   Generating Your Video
                 </h3>
                 <p className="text-text-secondary text-sm">
-                  This typically takes 1-3 minutes. Please don't close this page.
+                  {chunkInfo 
+                    ? `Processing ${chunkInfo.count} segments. This may take ${chunkInfo.estimatedTime}-${chunkInfo.estimatedTime * 1.5} minutes.`
+                    : 'This typically takes 1-3 minutes. Please don\'t close this page.'
+                  }
                 </p>
-                <p className="text-text-muted text-xs mt-2 animate-pulse">
-                  Processing with InfiniteTalk AI...
-                </p>
+                {videoStatusMessage && (
+                  <p className="text-electric text-sm mt-2 animate-pulse">
+                    {videoStatusMessage}
+                  </p>
+                )}
               </div>
 
               {/* Progress Bar */}
@@ -231,6 +397,7 @@ function Step4_VideoGenerator() {
                     style={{ width: `${videoProgress}%` }}
                   />
                 </div>
+                <p className="text-xs text-text-muted mt-2">{Math.round(videoProgress)}%</p>
               </div>
             </div>
           ) : (
@@ -270,6 +437,38 @@ function Step4_VideoGenerator() {
               Your browser does not support the video tag.
             </video>
           </div>
+
+          {/* Segment downloads if partial */}
+          {generatedVideo.isPartial && generatedVideo.allVideoUrls && (
+            <div className="p-4 bg-yellow-500/10 border-b border-yellow-500/30">
+              <p className="text-sm text-yellow-200 mb-2">
+                Video stitching failed. Download segments individually:
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {generatedVideo.allVideoUrls.map((url, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleDownloadSegment(url, i)}
+                    className="btn-secondary text-xs"
+                  >
+                    Segment {i + 1}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Success indicator for stitched video */}
+          {generatedVideo.isStitched && (
+            <div className="p-3 bg-green-500/10 border-b border-green-500/30">
+              <p className="text-sm text-green-300 flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Successfully combined {generatedVideo.segmentCount} segments
+              </p>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="p-6">
@@ -344,8 +543,3 @@ function Step4_VideoGenerator() {
 }
 
 export default Step4_VideoGenerator;
-
-
-
-
-

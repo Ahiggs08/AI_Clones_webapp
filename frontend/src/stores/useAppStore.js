@@ -66,7 +66,9 @@ const useAppStore = create((set, get) => ({
   setSelectedScene: (scene) => set({ selectedScene: scene }),
   
   // ============ VOICEOVER ============
-  voiceover: null, // { audioUrl, voiceId, duration, ... }
+  // voiceover can have: { audioUrl, audioData, voiceId, chunks: [...] }
+  // chunks is an array of { text, audioData, audioUrl } for long scripts
+  voiceover: null,
   setVoiceover: (voiceover) => set({ voiceover }),
   
   // ============ GENERATED VIDEO ============
@@ -78,11 +80,13 @@ const useAppStore = create((set, get) => ({
   isGeneratingVoiceover: false,
   isGeneratingVideo: false,
   videoProgress: 0,
+  videoStatusMessage: '',
   
   setIsGeneratingScene: (loading) => set({ isGeneratingScene: loading }),
   setIsGeneratingVoiceover: (loading) => set({ isGeneratingVoiceover: loading }),
   setIsGeneratingVideo: (loading) => set({ isGeneratingVideo: loading }),
   setVideoProgress: (progress) => set({ videoProgress: progress }),
+  setVideoStatusMessage: (message) => set({ videoStatusMessage: message }),
   
   // ============ RESET ============
   reset: () => set({

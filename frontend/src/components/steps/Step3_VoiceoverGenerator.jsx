@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import AudioPlayer from '../AudioPlayer';
 import { fetchVoices, generateVoiceover } from '../../utils/api';
+import { chunkScript, getChunkInfo, needsChunking, estimateAudioDuration } from '../../utils/scriptChunker';
 import useAppStore from '../../stores/useAppStore';
 
 function Step3_VoiceoverGenerator() {
@@ -104,40 +105,98 @@ function Step3_VoiceoverGenerator() {
     setVoiceover(null);
 
     try {
-      const result = await generateVoiceover({
-        script,
-        voiceId: selectedVoiceId,
-        elevenLabsApiKey: apiKeys.elevenLabsApiKey
-      });
-
-      // Handle audio data - store both blob URL for playback AND base64 for video generation
-      let audioUrl = result.audioUrl;
-      const audioData = result.audioData;
-      const contentType = result.contentType || 'audio/mpeg';
+      // Check if script needs chunking (> 15 seconds of audio)
+      const scriptNeedsChunking = needsChunking(script);
+      const chunks = chunkScript(script);
       
-      if (audioData) {
-        // Convert base64 to blob URL for local playback
-        const audioBlob = base64ToBlob(audioData, contentType);
-        audioUrl = URL.createObjectURL(audioBlob);
-      }
+      console.log(`[Voiceover] Script needs chunking: ${scriptNeedsChunking}, chunks: ${chunks.length}`);
+      
+      if (chunks.length > 1) {
+        // Generate voiceover for each chunk
+        toast.loading(`Generating ${chunks.length} audio segments...`, { id: 'chunk-progress' });
+        
+        const generatedChunks = [];
+        
+        for (let i = 0; i < chunks.length; i++) {
+          toast.loading(`Generating segment ${i + 1} of ${chunks.length}...`, { id: 'chunk-progress' });
+          
+          const result = await generateVoiceover({
+            script: chunks[i],
+            voiceId: selectedVoiceId,
+            elevenLabsApiKey: apiKeys.elevenLabsApiKey
+          });
+          
+          let audioUrl = result.audioUrl;
+          const audioData = result.audioData;
+          const contentType = result.contentType || 'audio/mpeg';
+          
+          if (audioData) {
+            const audioBlob = base64ToBlob(audioData, contentType);
+            audioUrl = URL.createObjectURL(audioBlob);
+          }
+          
+          generatedChunks.push({
+            index: i,
+            text: chunks[i],
+            audioUrl,
+            audioData,
+            contentType,
+            characterCount: chunks[i].length
+          });
+        }
+        
+        toast.dismiss('chunk-progress');
+        
+        // Store all chunks
+        setVoiceover({
+          isChunked: true,
+          chunks: generatedChunks,
+          voiceId: selectedVoiceId,
+          totalChunks: generatedChunks.length,
+          // For preview, use first chunk's audio
+          audioUrl: generatedChunks[0].audioUrl,
+          generatedAt: new Date().toISOString()
+        });
+        
+        toast.success(`Generated ${chunks.length} audio segments!`);
+      } else {
+        // Single chunk - original flow
+        const result = await generateVoiceover({
+          script,
+          voiceId: selectedVoiceId,
+          elevenLabsApiKey: apiKeys.elevenLabsApiKey
+        });
 
-      setVoiceover({
-        audioUrl,
-        audioData, // Store base64 for video generation
-        contentType, // Store content type
-        voiceId: selectedVoiceId,
-        duration: result.duration,
-        characterCount: result.characterCount,
-        generatedAt: result.generatedAt || new Date().toISOString()
-      });
+        let audioUrl = result.audioUrl;
+        const audioData = result.audioData;
+        const contentType = result.contentType || 'audio/mpeg';
+        
+        if (audioData) {
+          const audioBlob = base64ToBlob(audioData, contentType);
+          audioUrl = URL.createObjectURL(audioBlob);
+        }
+
+        setVoiceover({
+          isChunked: false,
+          audioUrl,
+          audioData,
+          contentType,
+          voiceId: selectedVoiceId,
+          duration: result.duration,
+          characterCount: result.characterCount,
+          generatedAt: result.generatedAt || new Date().toISOString()
+        });
+
+        toast.success('Voiceover generated successfully!');
+      }
 
       // Remember this voice
       setLastUsedVoiceId(selectedVoiceId);
       await saveSettings({ lastUsedVoiceId: selectedVoiceId });
 
-      toast.success('Voiceover generated successfully!');
     } catch (error) {
       console.error('Voiceover generation error:', error);
+      toast.dismiss('chunk-progress');
       toast.error(error.message || 'Failed to generate voiceover');
     } finally {
       setIsGeneratingVoiceover(false);
