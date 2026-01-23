@@ -9,13 +9,19 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5180,
+      headers: {
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cross-Origin-Opener-Policy': 'same-origin'
+      },
       proxy: {
         '/api': {
           target: backendUrl,
           changeOrigin: true
         }
       }
+    },
+    optimizeDeps: {
+      exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util']
     }
   };
 });
-
