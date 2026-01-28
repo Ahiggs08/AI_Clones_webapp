@@ -162,10 +162,10 @@ export const checkVideoStatus = async (jobId, kieApiKey) => {
  * @param {string} jobId - The job ID to poll
  * @param {string} kieApiKey - Kie.ai API key
  * @param {Function} onProgress - Progress callback (progress: number)
- * @param {number} interval - Polling interval in ms (default: 2000)
- * @param {number} timeout - Max time to wait in ms (default: 600000 = 10 min)
+ * @param {number} interval - Polling interval in ms (default: 3000)
+ * @param {number} timeout - Max time to wait in ms (default: 900000 = 15 min)
  */
-export const pollVideoStatus = async (jobId, kieApiKey, onProgress, interval = 3000, timeout = 600000) => {
+export const pollVideoStatus = async (jobId, kieApiKey, onProgress, interval = 3000, timeout = 900000) => {
   const startTime = Date.now();
   
   return new Promise((resolve, reject) => {
