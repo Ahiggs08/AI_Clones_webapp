@@ -72,13 +72,13 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: { message: 'Method not allowed' } });
 
   try {
-    let { sceneImageUrl, audioData, audioContentType } = req.body;
+    let { sceneImageData, sceneImageContentType, audioData, audioContentType } = req.body;
     
     // Use environment variable for API key
     const heygenApiKey = process.env.HEYGEN_API_KEY;
 
-    if (!sceneImageUrl) {
-      return res.status(400).json({ error: { message: 'Scene image URL is required' } });
+    if (!sceneImageData) {
+      return res.status(400).json({ error: { message: 'Scene image data is required' } });
     }
     if (!audioData) {
       return res.status(400).json({ error: { message: 'Audio data is required' } });
@@ -90,13 +90,6 @@ export default async function handler(req, res) {
         success: true,
         data: { jobId: `mock-job-${Date.now()}` }
       });
-    }
-
-    // Convert relative image URL to full URL
-    if (sceneImageUrl.startsWith('/')) {
-      const host = req.headers.host || req.headers['x-forwarded-host'];
-      const protocol = req.headers['x-forwarded-proto'] || 'https';
-      sceneImageUrl = `${protocol}://${host}${sceneImageUrl}`;
     }
 
     // Upload audio to catbox (HeyGen needs a public URL)
@@ -111,19 +104,14 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: { message: 'Failed to upload audio file: ' + uploadError.message } });
     }
 
-    // Fetch the image and upload to HeyGen
-    console.log('[HeyGen] Fetching image from:', sceneImageUrl);
+    // Convert base64 image to buffer and upload to HeyGen
+    console.log('[HeyGen] Preparing image for upload...');
+    const imageBuffer = Buffer.from(sceneImageData, 'base64');
+    const imageContentType = sceneImageContentType || 'image/png';
+
+    // Upload image to HeyGen
     let imageKey;
     try {
-      const imageResponse = await fetch(sceneImageUrl);
-      if (!imageResponse.ok) {
-        throw new Error(`Failed to fetch image: ${imageResponse.status}`);
-      }
-      
-      const imageArrayBuffer = await imageResponse.arrayBuffer();
-      const imageBuffer = Buffer.from(imageArrayBuffer);
-      const imageContentType = imageResponse.headers.get('content-type') || 'image/png';
-      
       console.log('[HeyGen] Uploading image to HeyGen...');
       imageKey = await uploadImageToHeyGen(imageBuffer, imageContentType, heygenApiKey);
       console.log('[HeyGen] Image key:', imageKey);
