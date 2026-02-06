@@ -1,7 +1,7 @@
 // HeyGen Avatar IV Video Generation API
 // Replaces Kie.ai with HeyGen for higher quality avatar videos
 
-// Upload buffer to catbox.moe (for audio hosting)
+// Upload buffer to catbox.moe (for file hosting)
 const uploadToCatbox = async (buffer, contentType, filename) => {
   const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
   
@@ -27,34 +27,37 @@ const uploadToCatbox = async (buffer, contentType, filename) => {
   throw new Error('Catbox upload failed: ' + result);
 };
 
-// Upload image to HeyGen to get image_key
-const uploadImageToHeyGen = async (imageUrl, apiKey) => {
-  // First fetch the image
-  const imageResponse = await fetch(imageUrl);
-  if (!imageResponse.ok) throw new Error(`Failed to fetch image: ${imageResponse.status}`);
+// Upload image to HeyGen to get image_key (using Node.js compatible multipart)
+const uploadImageToHeyGen = async (imageBuffer, contentType, apiKey) => {
+  const boundary = '----HeyGenBoundary' + Math.random().toString(36).substring(2);
+  const filename = contentType.includes('png') ? 'avatar.png' : 'avatar.jpg';
   
-  const imageBuffer = await imageResponse.arrayBuffer();
-  const contentType = imageResponse.headers.get('content-type') || 'image/png';
-  
-  // Upload to HeyGen
-  const formData = new FormData();
-  const blob = new Blob([imageBuffer], { type: contentType });
-  formData.append('file', blob, 'avatar.png');
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\n`),
+    Buffer.from(`Content-Disposition: form-data; name="file"; filename="${filename}"\r\n`),
+    Buffer.from(`Content-Type: ${contentType}\r\n\r\n`),
+    imageBuffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`)
+  ]);
   
   const uploadResponse = await fetch('https://upload.heygen.com/v1/asset', {
     method: 'POST',
     headers: {
-      'X-Api-Key': apiKey
+      'X-Api-Key': apiKey,
+      'Content-Type': `multipart/form-data; boundary=${boundary}`
     },
-    body: formData
+    body: body
   });
   
   const uploadResult = await uploadResponse.json();
   console.log('[HeyGen] Upload response:', JSON.stringify(uploadResult));
   
-  if (uploadResult.data?.url || uploadResult.data?.asset_id) {
-    // Return the asset_id or URL as image_key
-    return uploadResult.data.asset_id || uploadResult.data.url;
+  if (uploadResult.data?.asset_id) {
+    return uploadResult.data.asset_id;
+  }
+  if (uploadResult.data?.url) {
+    // Sometimes HeyGen returns URL instead of asset_id, extract the key from URL
+    return uploadResult.data.url;
   }
   
   throw new Error('Failed to upload image to HeyGen: ' + JSON.stringify(uploadResult));
@@ -105,14 +108,24 @@ export default async function handler(req, res) {
       console.log('[HeyGen] Audio uploaded to:', audioUrl);
     } catch (uploadError) {
       console.error('[HeyGen] Audio upload failed:', uploadError.message);
-      return res.status(500).json({ error: { message: 'Failed to upload audio file' } });
+      return res.status(500).json({ error: { message: 'Failed to upload audio file: ' + uploadError.message } });
     }
 
-    // Upload image to HeyGen to get image_key
-    console.log('[HeyGen] Uploading image to HeyGen...');
+    // Fetch the image and upload to HeyGen
+    console.log('[HeyGen] Fetching image from:', sceneImageUrl);
     let imageKey;
     try {
-      imageKey = await uploadImageToHeyGen(sceneImageUrl, heygenApiKey);
+      const imageResponse = await fetch(sceneImageUrl);
+      if (!imageResponse.ok) {
+        throw new Error(`Failed to fetch image: ${imageResponse.status}`);
+      }
+      
+      const imageArrayBuffer = await imageResponse.arrayBuffer();
+      const imageBuffer = Buffer.from(imageArrayBuffer);
+      const imageContentType = imageResponse.headers.get('content-type') || 'image/png';
+      
+      console.log('[HeyGen] Uploading image to HeyGen...');
+      imageKey = await uploadImageToHeyGen(imageBuffer, imageContentType, heygenApiKey);
       console.log('[HeyGen] Image key:', imageKey);
     } catch (uploadError) {
       console.error('[HeyGen] Image upload failed:', uploadError.message);
