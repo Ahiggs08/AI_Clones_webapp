@@ -1,7 +1,7 @@
-// HeyGen Avatar IV Video Generation API
-// Replaces Kie.ai with HeyGen for higher quality avatar videos
+// HeyGen Talking Photo Video Generation API
+// Uses HeyGen's Talking Photo feature for high-quality avatar videos
 
-// Upload buffer to catbox.moe (for file hosting)
+// Upload buffer to catbox.moe (for audio hosting)
 const uploadToCatbox = async (buffer, contentType, filename) => {
   const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
   
@@ -27,40 +27,30 @@ const uploadToCatbox = async (buffer, contentType, filename) => {
   throw new Error('Catbox upload failed: ' + result);
 };
 
-// Upload image to HeyGen to get image_key (using Node.js compatible multipart)
-const uploadImageToHeyGen = async (imageBuffer, contentType, apiKey) => {
-  const boundary = '----HeyGenBoundary' + Math.random().toString(36).substring(2);
-  const filename = contentType.includes('png') ? 'avatar.png' : 'avatar.jpg';
+// Upload image to HeyGen as Talking Photo (raw binary upload)
+const uploadTalkingPhoto = async (imageBuffer, contentType, apiKey) => {
+  console.log('[HeyGen] Uploading talking photo, size:', imageBuffer.length, 'bytes');
   
-  const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\n`),
-    Buffer.from(`Content-Disposition: form-data; name="file"; filename="${filename}"\r\n`),
-    Buffer.from(`Content-Type: ${contentType}\r\n\r\n`),
-    imageBuffer,
-    Buffer.from(`\r\n--${boundary}--\r\n`)
-  ]);
-  
-  const uploadResponse = await fetch('https://upload.heygen.com/v1/asset', {
+  const uploadResponse = await fetch('https://upload.heygen.com/v1/talking_photo', {
     method: 'POST',
     headers: {
       'X-Api-Key': apiKey,
-      'Content-Type': `multipart/form-data; boundary=${boundary}`
+      'Content-Type': contentType
     },
-    body: body
+    body: imageBuffer
   });
   
   const uploadResult = await uploadResponse.json();
-  console.log('[HeyGen] Upload response:', JSON.stringify(uploadResult));
+  console.log('[HeyGen] Talking photo upload response:', JSON.stringify(uploadResult));
   
-  if (uploadResult.data?.asset_id) {
-    return uploadResult.data.asset_id;
+  if (uploadResult.data?.talking_photo_id) {
+    return uploadResult.data.talking_photo_id;
   }
-  if (uploadResult.data?.url) {
-    // Sometimes HeyGen returns URL instead of asset_id, extract the key from URL
-    return uploadResult.data.url;
+  if (uploadResult.error) {
+    throw new Error(uploadResult.error.message || uploadResult.error.code || 'Upload failed');
   }
   
-  throw new Error('Failed to upload image to HeyGen: ' + JSON.stringify(uploadResult));
+  throw new Error('Failed to upload talking photo: ' + JSON.stringify(uploadResult));
 };
 
 export default async function handler(req, res) {
@@ -104,35 +94,42 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: { message: 'Failed to upload audio file: ' + uploadError.message } });
     }
 
-    // Convert base64 image to buffer and upload to HeyGen
+    // Convert base64 image to buffer and upload as Talking Photo
     console.log('[HeyGen] Preparing image for upload...');
     const imageBuffer = Buffer.from(sceneImageData, 'base64');
     const imageContentType = sceneImageContentType || 'image/png';
 
-    // Upload image to HeyGen
-    let imageKey;
+    // Upload image to HeyGen as Talking Photo
+    let talkingPhotoId;
     try {
-      console.log('[HeyGen] Uploading image to HeyGen...');
-      imageKey = await uploadImageToHeyGen(imageBuffer, imageContentType, heygenApiKey);
-      console.log('[HeyGen] Image key:', imageKey);
+      console.log('[HeyGen] Uploading talking photo...');
+      talkingPhotoId = await uploadTalkingPhoto(imageBuffer, imageContentType, heygenApiKey);
+      console.log('[HeyGen] Talking photo ID:', talkingPhotoId);
     } catch (uploadError) {
-      console.error('[HeyGen] Image upload failed:', uploadError.message);
+      console.error('[HeyGen] Talking photo upload failed:', uploadError.message);
       return res.status(500).json({ error: { message: 'Failed to upload image to HeyGen: ' + uploadError.message } });
     }
 
-    // Generate Avatar IV video
-    console.log('[HeyGen] Starting Avatar IV video generation...');
+    // Generate video with Talking Photo
+    console.log('[HeyGen] Starting video generation...');
     
-    const response = await fetch('https://api.heygen.com/v2/video/av4/generate', {
+    const response = await fetch('https://api.heygen.com/v2/video/generate', {
       method: 'POST',
       headers: {
         'X-Api-Key': heygenApiKey,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        image_key: imageKey,
-        audio_url: audioUrl,
-        video_title: `AI Clone Video - ${Date.now()}`,
+        video_inputs: [{
+          character: {
+            type: 'talking_photo',
+            talking_photo_id: talkingPhotoId
+          },
+          voice: {
+            type: 'audio',
+            audio_url: audioUrl
+          }
+        }],
         dimension: {
           width: 1080,
           height: 1920
@@ -141,7 +138,7 @@ export default async function handler(req, res) {
     });
     
     const heygenResult = await response.json();
-    console.log('[HeyGen] Response:', JSON.stringify(heygenResult));
+    console.log('[HeyGen] Video generation response:', JSON.stringify(heygenResult));
     
     if (heygenResult.data?.video_id) {
       return res.json({
@@ -149,7 +146,7 @@ export default async function handler(req, res) {
         data: { 
           jobId: heygenResult.data.video_id, 
           audioUrl, 
-          imageKey 
+          talkingPhotoId 
         }
       });
     } else if (heygenResult.error) {
