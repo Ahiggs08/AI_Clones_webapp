@@ -157,7 +157,7 @@ export const getSettings = async () => {
   const db = await getDB();
   const settings = await db.get('settings', 'userSettings');
   return settings || {
-    kieApiKey: '',
+    heygenApiKey: '',
     elevenLabsApiKey: '',
     lastUsedVoiceId: ''
   };

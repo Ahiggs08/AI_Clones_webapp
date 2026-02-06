@@ -102,8 +102,7 @@ function SceneGenerator({ onSceneGenerated }) {
         referenceImage: useDefaultReference ? null : referenceImage,
         useDefaultReference,
         prompt: prompt.trim(),
-        orientation,
-        kieApiKey: apiKeys.kieApiKey
+        orientation
       });
       console.log('[SceneGenerator] API response received:', result);
 

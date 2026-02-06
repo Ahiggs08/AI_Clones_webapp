@@ -69,14 +69,14 @@ function Step4_VideoGenerator() {
       sceneImageUrl: selectedScene.imageUrl,
       audioData: voiceover.audioData,
       audioContentType: voiceover.contentType || 'audio/mpeg',
-      kieApiKey: apiKeys.kieApiKey
+      heygenApiKey: apiKeys.heygenApiKey
     });
 
-    setVideoStatusMessage('Processing with InfiniteTalk AI...');
+    setVideoStatusMessage('Processing with HeyGen Avatar IV...');
     
     const result = await pollVideoStatus(
       jobId,
-      apiKeys.kieApiKey,
+      apiKeys.heygenApiKey,
       (progress) => setVideoProgress(progress)
     );
 
@@ -107,14 +107,14 @@ function Step4_VideoGenerator() {
           sceneImageUrl: selectedScene.imageUrl,
           audioData: chunk.audioData,
           audioContentType: chunk.contentType || 'audio/mpeg',
-          kieApiKey: apiKeys.kieApiKey
+          heygenApiKey: apiKeys.heygenApiKey
         });
 
         setVideoStatusMessage(`Processing segment ${chunkNum}/${totalChunks}...`);
         
         const result = await pollVideoStatus(
           jobId,
-          apiKeys.kieApiKey,
+          apiKeys.heygenApiKey,
           (progress) => {
             const baseProgress = (i / totalChunks) * 60;
             const chunkProgress = (progress / 100) * (60 / totalChunks);

@@ -1,4 +1,7 @@
-// Upload buffer to catbox.moe
+// HeyGen Avatar IV Video Generation API
+// Replaces Kie.ai with HeyGen for higher quality avatar videos
+
+// Upload buffer to catbox.moe (for audio hosting)
 const uploadToCatbox = async (buffer, contentType, filename) => {
   const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
   
@@ -24,16 +27,37 @@ const uploadToCatbox = async (buffer, contentType, filename) => {
   throw new Error('Catbox upload failed: ' + result);
 };
 
-// Upload image from URL to catbox
-const uploadImageToCatbox = async (imageUrl) => {
+// Upload image to HeyGen to get image_key
+const uploadImageToHeyGen = async (imageUrl, apiKey) => {
+  // First fetch the image
   const imageResponse = await fetch(imageUrl);
   if (!imageResponse.ok) throw new Error(`Failed to fetch image: ${imageResponse.status}`);
   
-  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+  const imageBuffer = await imageResponse.arrayBuffer();
   const contentType = imageResponse.headers.get('content-type') || 'image/png';
-  const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'png';
   
-  return uploadToCatbox(imageBuffer, contentType, `image.${ext}`);
+  // Upload to HeyGen
+  const formData = new FormData();
+  const blob = new Blob([imageBuffer], { type: contentType });
+  formData.append('file', blob, 'avatar.png');
+  
+  const uploadResponse = await fetch('https://upload.heygen.com/v1/asset', {
+    method: 'POST',
+    headers: {
+      'X-Api-Key': apiKey
+    },
+    body: formData
+  });
+  
+  const uploadResult = await uploadResponse.json();
+  console.log('[HeyGen] Upload response:', JSON.stringify(uploadResult));
+  
+  if (uploadResult.data?.url || uploadResult.data?.asset_id) {
+    // Return the asset_id or URL as image_key
+    return uploadResult.data.asset_id || uploadResult.data.url;
+  }
+  
+  throw new Error('Failed to upload image to HeyGen: ' + JSON.stringify(uploadResult));
 };
 
 export default async function handler(req, res) {
@@ -48,7 +72,7 @@ export default async function handler(req, res) {
     let { sceneImageUrl, audioData, audioContentType } = req.body;
     
     // Use environment variable for API key
-    const kieApiKey = process.env.KIE_API_KEY;
+    const heygenApiKey = process.env.HEYGEN_API_KEY;
 
     if (!sceneImageUrl) {
       return res.status(400).json({ error: { message: 'Scene image URL is required' } });
@@ -57,7 +81,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: { message: 'Audio data is required' } });
     }
 
-    if (!kieApiKey) {
+    if (!heygenApiKey) {
       console.log('[Video] No API key configured, using mock mode');
       return res.json({
         success: true,
@@ -65,67 +89,76 @@ export default async function handler(req, res) {
       });
     }
 
-    // Convert relative image URL to full URL and upload to catbox
+    // Convert relative image URL to full URL
     if (sceneImageUrl.startsWith('/')) {
       const host = req.headers.host || req.headers['x-forwarded-host'];
       const protocol = req.headers['x-forwarded-proto'] || 'https';
-      const fullImageUrl = `${protocol}://${host}${sceneImageUrl}`;
-      
-      console.log('[Video] Uploading image to catbox...');
-      try {
-        sceneImageUrl = await uploadImageToCatbox(fullImageUrl);
-        console.log('[Video] Image uploaded to:', sceneImageUrl);
-      } catch (uploadError) {
-        console.error('[Video] Image upload failed:', uploadError.message);
-        return res.status(500).json({ error: { message: 'Failed to upload scene image' } });
-      }
+      sceneImageUrl = `${protocol}://${host}${sceneImageUrl}`;
     }
 
-    // Upload audio to catbox
-    console.log('[Video] Uploading audio to catbox...');
+    // Upload audio to catbox (HeyGen needs a public URL)
+    console.log('[HeyGen] Uploading audio to catbox...');
     let audioUrl;
     try {
       const audioBuffer = Buffer.from(audioData, 'base64');
       audioUrl = await uploadToCatbox(audioBuffer, audioContentType || 'audio/mpeg', 'audio.mp3');
-      console.log('[Video] Audio uploaded to:', audioUrl);
+      console.log('[HeyGen] Audio uploaded to:', audioUrl);
     } catch (uploadError) {
-      console.error('[Video] Audio upload failed:', uploadError.message);
+      console.error('[HeyGen] Audio upload failed:', uploadError.message);
       return res.status(500).json({ error: { message: 'Failed to upload audio file' } });
     }
 
-    // Start video generation with Kie.ai
-    console.log('[Video] Starting video generation with Kie.ai');
+    // Upload image to HeyGen to get image_key
+    console.log('[HeyGen] Uploading image to HeyGen...');
+    let imageKey;
+    try {
+      imageKey = await uploadImageToHeyGen(sceneImageUrl, heygenApiKey);
+      console.log('[HeyGen] Image key:', imageKey);
+    } catch (uploadError) {
+      console.error('[HeyGen] Image upload failed:', uploadError.message);
+      return res.status(500).json({ error: { message: 'Failed to upload image to HeyGen: ' + uploadError.message } });
+    }
+
+    // Generate Avatar IV video
+    console.log('[HeyGen] Starting Avatar IV video generation...');
     
-    const response = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+    const response = await fetch('https://api.heygen.com/v2/video/av4/generate', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${kieApiKey}`,
+        'X-Api-Key': heygenApiKey,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'infinitalk/from-audio',
-        input: {
-          image_url: sceneImageUrl,
-          audio_url: audioUrl,
-          prompt: 'A person speaking naturally'
+        image_key: imageKey,
+        audio_url: audioUrl,
+        video_title: `AI Clone Video - ${Date.now()}`,
+        dimension: {
+          width: 1080,
+          height: 1920
         }
       })
     });
     
-    const kieResult = await response.json();
-    console.log('[Video] Kie.ai response:', JSON.stringify(kieResult));
+    const heygenResult = await response.json();
+    console.log('[HeyGen] Response:', JSON.stringify(heygenResult));
     
-    if ((kieResult.code === 0 || kieResult.code === 200) && kieResult.data?.taskId) {
+    if (heygenResult.data?.video_id) {
       return res.json({
         success: true,
-        data: { jobId: kieResult.data.taskId, audioUrl, imageUrl: sceneImageUrl }
+        data: { 
+          jobId: heygenResult.data.video_id, 
+          audioUrl, 
+          imageKey 
+        }
       });
+    } else if (heygenResult.error) {
+      throw new Error(heygenResult.error.message || heygenResult.error.code || 'HeyGen API error');
     } else {
-      throw new Error(kieResult.msg || 'Failed to start video generation');
+      throw new Error('Failed to start video generation: ' + JSON.stringify(heygenResult));
     }
     
   } catch (error) {
-    console.error('[Video] Generation error:', error.message);
+    console.error('[HeyGen] Generation error:', error.message);
     res.status(500).json({ error: { message: error.message || 'Failed to start video generation' } });
   }
 }

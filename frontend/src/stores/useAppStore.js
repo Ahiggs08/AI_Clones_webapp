@@ -4,7 +4,7 @@ import { getSettings, saveSettings as saveSettingsToDB } from '../utils/db';
 const useAppStore = create((set, get) => ({
   // ============ API KEYS ============
   apiKeys: {
-    kieApiKey: '',
+    heygenApiKey: '',
     elevenLabsApiKey: ''
   },
   
@@ -23,7 +23,7 @@ const useAppStore = create((set, get) => ({
       const settings = await getSettings();
       set({
         apiKeys: {
-          kieApiKey: settings.kieApiKey || '',
+          heygenApiKey: settings.heygenApiKey || '',
           elevenLabsApiKey: settings.elevenLabsApiKey || ''
         },
         lastUsedVoiceId: settings.lastUsedVoiceId || '',
@@ -38,7 +38,7 @@ const useAppStore = create((set, get) => ({
   saveSettings: async (newSettings) => {
     const currentState = get();
     const settings = {
-      kieApiKey: newSettings.kieApiKey ?? currentState.apiKeys.kieApiKey,
+      heygenApiKey: newSettings.heygenApiKey ?? currentState.apiKeys.heygenApiKey,
       elevenLabsApiKey: newSettings.elevenLabsApiKey ?? currentState.apiKeys.elevenLabsApiKey,
       lastUsedVoiceId: newSettings.lastUsedVoiceId ?? currentState.lastUsedVoiceId
     };
@@ -46,7 +46,7 @@ const useAppStore = create((set, get) => ({
     await saveSettingsToDB(settings);
     set({
       apiKeys: {
-        kieApiKey: settings.kieApiKey,
+        heygenApiKey: settings.heygenApiKey,
         elevenLabsApiKey: settings.elevenLabsApiKey
       },
       lastUsedVoiceId: settings.lastUsedVoiceId
@@ -120,7 +120,7 @@ const useAppStore = create((set, get) => ({
   // ============ API KEYS CHECK ============
   hasRequiredApiKeys: () => {
     const { apiKeys } = get();
-    return !!(apiKeys.kieApiKey && apiKeys.kieApiKey.trim().length > 0 &&
+    return !!(apiKeys.heygenApiKey && apiKeys.heygenApiKey.trim().length > 0 &&
               apiKeys.elevenLabsApiKey && apiKeys.elevenLabsApiKey.trim().length > 0);
   }
 }));

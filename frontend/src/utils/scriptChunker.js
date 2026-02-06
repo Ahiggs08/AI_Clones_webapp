@@ -1,17 +1,17 @@
 /**
- * Utility to split scripts into chunks that will generate ~14 second audio
+ * Utility to split scripts into chunks for video generation
  * 
  * Based on actual testing:
  * - ElevenLabs generates speech at roughly 15-16 characters per second
- * - Kie.ai has a 15-second audio limit
- * - We target 14 seconds to have buffer
+ * - HeyGen Avatar IV supports up to 3 minutes (180 seconds) per video
+ * - We target 170 seconds to have buffer
  * 
- * 14 seconds × 15 chars/second = 210 characters per chunk
+ * 170 seconds × 15 chars/second = 2550 characters per chunk
  */
 
 const CHARS_PER_SECOND = 15;
-const MAX_DURATION_SECONDS = 14; // Slightly under 15 to be safe
-const MAX_CHARS_PER_CHUNK = 210; // ~14 seconds of audio
+const MAX_DURATION_SECONDS = 170; // Slightly under 3 minutes to be safe
+const MAX_CHARS_PER_CHUNK = 2550; // ~170 seconds of audio (nearly 3 minutes)
 
 /**
  * Estimate audio duration in seconds from text

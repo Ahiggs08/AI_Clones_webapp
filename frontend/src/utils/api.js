@@ -59,9 +59,8 @@ export const checkHealth = async () => {
  * @param {boolean} params.useDefaultReference - Whether to use the default reference image
  * @param {string} params.prompt - Generation prompt
  * @param {string} params.orientation - 'vertical' or 'horizontal'
- * @param {string} params.kieApiKey - Kie.ai API key (optional in mock mode)
  */
-export const generateScene = async ({ referenceImage, useDefaultReference, prompt, orientation, kieApiKey }) => {
+export const generateScene = async ({ referenceImage, useDefaultReference, prompt, orientation }) => {
   const formData = new FormData();
 
   if (referenceImage) {
@@ -75,8 +74,7 @@ export const generateScene = async ({ referenceImage, useDefaultReference, promp
 
   const response = await api.post('/scene/generate', formData, {
     headers: {
-      'Content-Type': 'multipart/form-data',
-      ...(kieApiKey && { 'x-kie-api-key': kieApiKey })
+      'Content-Type': 'multipart/form-data'
     }
   });
 
@@ -127,14 +125,14 @@ export const generateVoiceover = async ({ script, voiceId, elevenLabsApiKey }) =
  * @param {string} params.sceneImageUrl - URL of the scene image
  * @param {string} params.audioData - Base64 encoded audio data
  * @param {string} params.audioContentType - MIME type of the audio
- * @param {string} params.kieApiKey - Kie.ai API key (optional in mock mode)
+ * @param {string} params.heygenApiKey - HeyGen API key (optional in mock mode)
  */
-export const generateVideo = async ({ sceneImageUrl, audioData, audioContentType, kieApiKey }) => {
+export const generateVideo = async ({ sceneImageUrl, audioData, audioContentType, heygenApiKey }) => {
   const response = await api.post('/video/generate',
     { sceneImageUrl, audioData, audioContentType },
     {
       headers: {
-        ...(kieApiKey && { 'x-kie-api-key': kieApiKey })
+        ...(heygenApiKey && { 'x-heygen-api-key': heygenApiKey })
       }
     }
   );
@@ -145,12 +143,12 @@ export const generateVideo = async ({ sceneImageUrl, audioData, audioContentType
 /**
  * Check video generation status
  * @param {string} jobId - The job ID to check
- * @param {string} kieApiKey - Kie.ai API key (optional)
+ * @param {string} heygenApiKey - HeyGen API key (optional)
  */
-export const checkVideoStatus = async (jobId, kieApiKey) => {
+export const checkVideoStatus = async (jobId, heygenApiKey) => {
   const response = await api.get(`/video/status/${jobId}`, {
     headers: {
-      ...(kieApiKey && { 'x-kie-api-key': kieApiKey })
+      ...(heygenApiKey && { 'x-heygen-api-key': heygenApiKey })
     }
   });
   
@@ -160,18 +158,18 @@ export const checkVideoStatus = async (jobId, kieApiKey) => {
 /**
  * Poll for video completion
  * @param {string} jobId - The job ID to poll
- * @param {string} kieApiKey - Kie.ai API key
+ * @param {string} heygenApiKey - HeyGen API key
  * @param {Function} onProgress - Progress callback (progress: number)
  * @param {number} interval - Polling interval in ms (default: 3000)
  * @param {number} timeout - Max time to wait in ms (default: 900000 = 15 min)
  */
-export const pollVideoStatus = async (jobId, kieApiKey, onProgress, interval = 3000, timeout = 900000) => {
+export const pollVideoStatus = async (jobId, heygenApiKey, onProgress, interval = 3000, timeout = 900000) => {
   const startTime = Date.now();
   
   return new Promise((resolve, reject) => {
     const poll = async () => {
       try {
-        const status = await checkVideoStatus(jobId, kieApiKey);
+        const status = await checkVideoStatus(jobId, heygenApiKey);
         
         if (onProgress && status.progress !== undefined) {
           onProgress(status.progress);
