@@ -452,22 +452,22 @@ function Step4_VideoGenerator() {
         </div>
       ) : (
         <div className="glass-card overflow-hidden mb-8 animate-slide-up">
-          {/* Video Player - cropped to hide watermark */}
-          <div className="aspect-video bg-void overflow-hidden relative">
-            <video
-              id="generated-video"
-              src={generatedVideo.videoUrl}
-              controls
-              className="w-full absolute top-0 left-0"
-              style={{ 
-                height: '105%', // Slightly larger to crop bottom
-                objectFit: 'cover',
-                objectPosition: 'top center'
-              }}
-              poster={selectedScene?.imageUrl}
-            >
-              Your browser does not support the video tag.
-            </video>
+          {/* Video Player - portrait video with slight bottom crop */}
+          <div className="max-w-md mx-auto">
+            <div className="relative overflow-hidden" style={{ paddingBottom: '174%' }}> {/* ~9:16 ratio minus small crop */}
+              <video
+                id="generated-video"
+                src={generatedVideo.videoUrl}
+                controls
+                className="absolute top-0 left-0 w-full"
+                style={{ 
+                  height: '103%', // Extends 3% below container to hide watermark
+                }}
+                poster={selectedScene?.imageUrl}
+              >
+                Your browser does not support the video tag.
+              </video>
+            </div>
           </div>
 
           {/* Segment downloads if partial */}
