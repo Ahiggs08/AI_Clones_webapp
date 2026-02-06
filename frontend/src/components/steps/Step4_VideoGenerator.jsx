@@ -209,29 +209,132 @@ function Step4_VideoGenerator() {
     }
   };
 
+  const [isProcessingDownload, setIsProcessingDownload] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+
+  // Crop video to remove bottom watermark using canvas
+  const cropVideo = async (videoUrl) => {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
+      video.src = videoUrl;
+      video.muted = true;
+      
+      video.onloadedmetadata = () => {
+        const originalWidth = video.videoWidth;
+        const originalHeight = video.videoHeight;
+        
+        // Crop bottom 12% to remove watermark
+        const cropPercent = 0.12;
+        const newHeight = Math.floor(originalHeight * (1 - cropPercent));
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = originalWidth;
+        canvas.height = newHeight;
+        const ctx = canvas.getContext('2d');
+        
+        const stream = canvas.captureStream(30); // 30 fps
+        const mediaRecorder = new MediaRecorder(stream, {
+          mimeType: 'video/webm;codecs=vp9',
+          videoBitsPerSecond: 5000000
+        });
+        
+        const chunks = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+        
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          resolve(blob);
+        };
+        
+        mediaRecorder.onerror = reject;
+        
+        // Start recording
+        mediaRecorder.start();
+        
+        const drawFrame = () => {
+          if (video.paused || video.ended) {
+            mediaRecorder.stop();
+            return;
+          }
+          
+          // Draw only the top portion (cropping bottom)
+          ctx.drawImage(
+            video,
+            0, 0, originalWidth, newHeight, // Source: top portion
+            0, 0, originalWidth, newHeight  // Destination: full canvas
+          );
+          
+          // Update progress
+          const progress = (video.currentTime / video.duration) * 100;
+          setDownloadProgress(Math.round(progress));
+          
+          requestAnimationFrame(drawFrame);
+        };
+        
+        video.onplay = () => {
+          drawFrame();
+        };
+        
+        video.onended = () => {
+          setTimeout(() => mediaRecorder.stop(), 100);
+        };
+        
+        video.play();
+      };
+      
+      video.onerror = reject;
+    });
+  };
+
   const handleDownload = async () => {
     if (!generatedVideo?.videoUrl) return;
 
     try {
-      let blob;
+      setIsProcessingDownload(true);
+      setDownloadProgress(0);
+      toast.loading('Processing video for download...', { id: 'download-progress' });
       
-      if (generatedVideo.videoBlob) {
-        blob = generatedVideo.videoBlob;
-      } else {
-        const response = await fetch(generatedVideo.videoUrl);
-        blob = await response.blob();
-      }
+      // Crop the video to remove watermark
+      const croppedBlob = await cropVideo(generatedVideo.videoUrl);
       
-      const url = URL.createObjectURL(blob);
+      toast.dismiss('download-progress');
+      
+      const url = URL.createObjectURL(croppedBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `ai-clone-video-${Date.now()}.mp4`;
+      a.download = `ai-clone-video-${Date.now()}.webm`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      
+      toast.success('Video downloaded!');
     } catch (error) {
-      toast.error('Failed to download video');
+      console.error('Download error:', error);
+      toast.dismiss('download-progress');
+      toast.error('Failed to process video. Downloading original...');
+      
+      // Fallback to original video
+      try {
+        const response = await fetch(generatedVideo.videoUrl);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ai-clone-video-${Date.now()}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (fallbackError) {
+        toast.error('Failed to download video');
+      }
+    } finally {
+      setIsProcessingDownload(false);
+      setDownloadProgress(0);
     }
   };
 
@@ -517,12 +620,22 @@ function Step4_VideoGenerator() {
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={handleDownload}
+                disabled={isProcessingDownload}
                 className="btn-primary flex items-center gap-2"
               >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Download Video
+                {isProcessingDownload ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Processing {downloadProgress}%
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download Video
+                  </>
+                )}
               </button>
 
               <button
