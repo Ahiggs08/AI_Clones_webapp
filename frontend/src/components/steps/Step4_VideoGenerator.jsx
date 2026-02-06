@@ -452,12 +452,18 @@ function Step4_VideoGenerator() {
         </div>
       ) : (
         <div className="glass-card overflow-hidden mb-8 animate-slide-up">
-          {/* Video Player */}
-          <div className="aspect-video bg-void">
+          {/* Video Player - cropped to hide watermark */}
+          <div className="aspect-video bg-void overflow-hidden relative">
             <video
+              id="generated-video"
               src={generatedVideo.videoUrl}
               controls
-              className="w-full h-full"
+              className="w-full absolute top-0 left-0"
+              style={{ 
+                height: '105%', // Slightly larger to crop bottom
+                objectFit: 'cover',
+                objectPosition: 'top center'
+              }}
               poster={selectedScene?.imageUrl}
             >
               Your browser does not support the video tag.
@@ -495,6 +501,16 @@ function Step4_VideoGenerator() {
               </p>
             </div>
           )}
+
+          {/* Video ready notice */}
+          <div className="p-3 bg-electric/10 border-b border-electric/30">
+            <p className="text-sm text-electric flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Video generated successfully! Preview is optimized for viewing.
+            </p>
+          </div>
 
           {/* Actions */}
           <div className="p-6">
