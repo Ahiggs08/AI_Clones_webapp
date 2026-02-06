@@ -452,16 +452,16 @@ function Step4_VideoGenerator() {
         </div>
       ) : (
         <div className="glass-card overflow-hidden mb-8 animate-slide-up">
-          {/* Video Player - portrait video with slight bottom crop */}
+          {/* Video Player - portrait video with bottom crop to hide watermark */}
           <div className="max-w-md mx-auto">
-            <div className="relative overflow-hidden" style={{ paddingBottom: '174%' }}> {/* ~9:16 ratio minus small crop */}
+            <div className="relative overflow-hidden" style={{ paddingBottom: '170%' }}> {/* 9:16 = 177.7%, cropped to ~170% */}
               <video
                 id="generated-video"
                 src={generatedVideo.videoUrl}
                 controls
                 className="absolute top-0 left-0 w-full"
                 style={{ 
-                  height: '103%', // Extends 3% below container to hide watermark
+                  height: '105%', // Video extends 5% below visible area to hide watermark
                 }}
                 poster={selectedScene?.imageUrl}
               >
