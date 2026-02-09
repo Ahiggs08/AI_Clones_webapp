@@ -218,10 +218,10 @@ function Step4_VideoGenerator() {
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';
       video.src = videoUrl;
-      video.muted = false; // Need audio
-      video.volume = 1;
+      video.muted = false;
+      video.volume = 0.01; // Very quiet but not muted (muted prevents audio capture)
       
-      video.onloadedmetadata = () => {
+      video.onloadedmetadata = async () => {
         const originalWidth = video.videoWidth;
         const originalHeight = video.videoHeight;
         
@@ -234,21 +234,27 @@ function Step4_VideoGenerator() {
         canvas.height = newHeight;
         const ctx = canvas.getContext('2d');
         
-        // Get video stream from canvas
-        const canvasStream = canvas.captureStream(30); // 30 fps
+        // Get video stream from canvas (video only)
+        const canvasStream = canvas.captureStream(30);
         
-        // Create audio context to capture audio from video
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const source = audioContext.createMediaElementSource(video);
-        const destination = audioContext.createMediaStreamDestination();
-        source.connect(destination);
-        source.connect(audioContext.destination); // Also play through speakers (optional)
+        // Try to get audio from video element's captureStream
+        let audioTracks = [];
+        try {
+          // This captures both video and audio from the video element
+          const videoStream = video.captureStream ? video.captureStream() : video.mozCaptureStream();
+          audioTracks = videoStream.getAudioTracks();
+          console.log('Captured audio tracks:', audioTracks.length);
+        } catch (e) {
+          console.warn('Could not capture audio from video:', e);
+        }
         
-        // Combine video (from canvas) and audio streams
+        // Combine canvas video with original audio
         const combinedStream = new MediaStream([
           ...canvasStream.getVideoTracks(),
-          ...destination.stream.getAudioTracks()
+          ...audioTracks
         ]);
+        
+        console.log('Combined stream tracks - video:', combinedStream.getVideoTracks().length, 'audio:', combinedStream.getAudioTracks().length);
         
         const mediaRecorder = new MediaRecorder(combinedStream, {
           mimeType: 'video/webm;codecs=vp9,opus',
@@ -262,18 +268,14 @@ function Step4_VideoGenerator() {
         };
         
         mediaRecorder.onstop = () => {
-          audioContext.close();
           const blob = new Blob(chunks, { type: 'video/webm' });
           resolve(blob);
         };
         
-        mediaRecorder.onerror = (e) => {
-          audioContext.close();
-          reject(e);
-        };
+        mediaRecorder.onerror = reject;
         
         // Start recording
-        mediaRecorder.start();
+        mediaRecorder.start(100); // Collect data every 100ms
         
         const drawFrame = () => {
           if (video.paused || video.ended) {
@@ -283,11 +285,10 @@ function Step4_VideoGenerator() {
           // Draw only the top portion (cropping bottom)
           ctx.drawImage(
             video,
-            0, 0, originalWidth, newHeight, // Source: top portion
-            0, 0, originalWidth, newHeight  // Destination: full canvas
+            0, 0, originalWidth, newHeight,
+            0, 0, originalWidth, newHeight
           );
           
-          // Update progress
           const progress = (video.currentTime / video.duration) * 100;
           setDownloadProgress(Math.round(progress));
           
@@ -299,12 +300,10 @@ function Step4_VideoGenerator() {
         };
         
         video.onended = () => {
-          setTimeout(() => mediaRecorder.stop(), 100);
+          setTimeout(() => mediaRecorder.stop(), 200);
         };
         
-        // Mute speaker output but keep audio in stream
-        video.volume = 0;
-        video.play();
+        video.play().catch(reject);
       };
       
       video.onerror = reject;
