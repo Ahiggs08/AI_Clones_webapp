@@ -212,13 +212,14 @@ function Step4_VideoGenerator() {
   const [isProcessingDownload, setIsProcessingDownload] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
 
-  // Crop video to remove bottom watermark using canvas
+  // Crop video to remove bottom watermark using canvas (with audio)
   const cropVideo = async (videoUrl) => {
     return new Promise((resolve, reject) => {
       const video = document.createElement('video');
       video.crossOrigin = 'anonymous';
       video.src = videoUrl;
-      video.muted = true;
+      video.muted = false; // Need audio
+      video.volume = 1;
       
       video.onloadedmetadata = () => {
         const originalWidth = video.videoWidth;
@@ -233,10 +234,26 @@ function Step4_VideoGenerator() {
         canvas.height = newHeight;
         const ctx = canvas.getContext('2d');
         
-        const stream = canvas.captureStream(30); // 30 fps
-        const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: 'video/webm;codecs=vp9',
-          videoBitsPerSecond: 5000000
+        // Get video stream from canvas
+        const canvasStream = canvas.captureStream(30); // 30 fps
+        
+        // Create audio context to capture audio from video
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaElementSource(video);
+        const destination = audioContext.createMediaStreamDestination();
+        source.connect(destination);
+        source.connect(audioContext.destination); // Also play through speakers (optional)
+        
+        // Combine video (from canvas) and audio streams
+        const combinedStream = new MediaStream([
+          ...canvasStream.getVideoTracks(),
+          ...destination.stream.getAudioTracks()
+        ]);
+        
+        const mediaRecorder = new MediaRecorder(combinedStream, {
+          mimeType: 'video/webm;codecs=vp9,opus',
+          videoBitsPerSecond: 5000000,
+          audioBitsPerSecond: 128000
         });
         
         const chunks = [];
@@ -245,18 +262,21 @@ function Step4_VideoGenerator() {
         };
         
         mediaRecorder.onstop = () => {
+          audioContext.close();
           const blob = new Blob(chunks, { type: 'video/webm' });
           resolve(blob);
         };
         
-        mediaRecorder.onerror = reject;
+        mediaRecorder.onerror = (e) => {
+          audioContext.close();
+          reject(e);
+        };
         
         // Start recording
         mediaRecorder.start();
         
         const drawFrame = () => {
           if (video.paused || video.ended) {
-            mediaRecorder.stop();
             return;
           }
           
@@ -282,6 +302,8 @@ function Step4_VideoGenerator() {
           setTimeout(() => mediaRecorder.stop(), 100);
         };
         
+        // Mute speaker output but keep audio in stream
+        video.volume = 0;
         video.play();
       };
       
