@@ -62,13 +62,19 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: { message: 'Method not allowed' } });
 
   try {
-    let { sceneImageData, sceneImageContentType, audioData, audioContentType } = req.body;
+    // Parse body if it's a string
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (e) { body = {}; }
+    }
+    
+    let { sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType } = body || {};
     
     // Use environment variable for API key
     const heygenApiKey = process.env.HEYGEN_API_KEY;
 
-    if (!sceneImageData) {
-      return res.status(400).json({ error: { message: 'Scene image data is required' } });
+    if (!sceneImageUrl && !sceneImageData) {
+      return res.status(400).json({ error: { message: 'Scene image URL or data is required' } });
     }
     if (!audioData) {
       return res.status(400).json({ error: { message: 'Audio data is required' } });
@@ -94,10 +100,31 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: { message: 'Failed to upload audio file: ' + uploadError.message } });
     }
 
-    // Convert base64 image to buffer and upload as Talking Photo
-    console.log('[HeyGen] Preparing image for upload...');
-    const imageBuffer = Buffer.from(sceneImageData, 'base64');
-    const imageContentType = sceneImageContentType || 'image/png';
+    // Get image buffer - either from URL (fetch server-side) or from base64 data
+    let imageBuffer;
+    let imageContentType = sceneImageContentType || 'image/png';
+    
+    if (sceneImageUrl) {
+      // Fetch image server-side (avoids CORS issues)
+      console.log('[HeyGen] Fetching scene image from URL:', sceneImageUrl);
+      try {
+        const imageResponse = await fetch(sceneImageUrl);
+        if (!imageResponse.ok) {
+          throw new Error(`Failed to fetch image: ${imageResponse.status}`);
+        }
+        const arrayBuffer = await imageResponse.arrayBuffer();
+        imageBuffer = Buffer.from(arrayBuffer);
+        imageContentType = imageResponse.headers.get('content-type') || 'image/png';
+        console.log('[HeyGen] Image fetched, size:', imageBuffer.length, 'bytes, type:', imageContentType);
+      } catch (fetchError) {
+        console.error('[HeyGen] Image fetch failed:', fetchError.message);
+        return res.status(500).json({ error: { message: 'Failed to fetch scene image: ' + fetchError.message } });
+      }
+    } else {
+      // Use base64 data directly
+      console.log('[HeyGen] Using provided base64 image data');
+      imageBuffer = Buffer.from(sceneImageData, 'base64');
+    }
 
     // Upload image to HeyGen as Talking Photo
     let talkingPhotoId;

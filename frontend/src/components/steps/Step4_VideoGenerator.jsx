@@ -62,32 +62,12 @@ function Step4_VideoGenerator() {
     }
   };
 
-  // Helper to fetch image and convert to base64
-  const fetchImageAsBase64 = async (imageUrl) => {
-    const response = await fetch(imageUrl);
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = reader.result.split(',')[1]; // Remove data URL prefix
-        resolve({ data: base64, contentType: blob.type });
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  };
-
   const handleSingleVideoGeneration = async () => {
-    setVideoStatusMessage('Preparing scene image...');
-    
-    // Fetch scene image and convert to base64
-    const sceneImage = await fetchImageAsBase64(selectedScene.imageUrl);
-    
     setVideoStatusMessage('Starting video generation...');
     
+    // Send image URL to backend - it will fetch server-side (avoids CORS)
     const { jobId } = await generateVideo({
-      sceneImageData: sceneImage.data,
-      sceneImageContentType: sceneImage.contentType,
+      sceneImageUrl: selectedScene.imageUrl,
       audioData: voiceover.audioData,
       audioContentType: voiceover.contentType || 'audio/mpeg',
       heygenApiKey: apiKeys.heygenApiKey
@@ -115,11 +95,7 @@ function Step4_VideoGenerator() {
     const totalChunks = chunks.length;
     const videoUrls = [];
 
-    // Fetch scene image once and reuse for all chunks
-    setVideoStatusMessage('Preparing scene image...');
-    const sceneImage = await fetchImageAsBase64(selectedScene.imageUrl);
-
-    // Generate video for each chunk
+    // Generate video for each chunk (backend fetches image server-side)
     for (let i = 0; i < totalChunks; i++) {
       const chunk = chunks[i];
       const chunkNum = i + 1;
@@ -129,8 +105,7 @@ function Step4_VideoGenerator() {
       
       try {
         const { jobId } = await generateVideo({
-          sceneImageData: sceneImage.data,
-          sceneImageContentType: sceneImage.contentType,
+          sceneImageUrl: selectedScene.imageUrl,
           audioData: chunk.audioData,
           audioContentType: chunk.contentType || 'audio/mpeg',
           heygenApiKey: apiKeys.heygenApiKey

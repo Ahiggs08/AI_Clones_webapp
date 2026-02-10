@@ -118,9 +118,9 @@ export const generateVoiceover = async ({ script, voiceId, elevenLabsApiKey }) =
  * @param {string} params.audioContentType - MIME type of the audio
  * @param {string} params.heygenApiKey - HeyGen API key (optional in mock mode)
  */
-export const generateVideo = async ({ sceneImageData, sceneImageContentType, audioData, audioContentType, heygenApiKey }) => {
+export const generateVideo = async ({ sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType, heygenApiKey }) => {
   const response = await api.post('/video/generate',
-    { sceneImageData, sceneImageContentType, audioData, audioContentType },
+    { sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType },
     {
       headers: {
         ...(heygenApiKey && { 'x-heygen-api-key': heygenApiKey })
