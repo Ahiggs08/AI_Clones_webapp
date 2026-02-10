@@ -38,7 +38,20 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { prompt, orientation = 'vertical', useDefaultReference } = req.body;
+    // Parse body if it's a string
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch (e) {
+        return res.status(400).json({ error: { message: 'Invalid JSON body' } });
+      }
+    }
+    if (!body) {
+      return res.status(400).json({ error: { message: 'Request body is required' } });
+    }
+    
+    const { prompt, orientation = 'vertical', useDefaultReference } = body;
     
     // Use environment variable for API key
     const kieApiKey = process.env.KIE_API_KEY;
