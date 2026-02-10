@@ -11,7 +11,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { passcode } = req.body;
+  // Parse body if it's a string
+  let body = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch (e) { body = {}; }
+  }
+  
+  const { passcode } = body || {};
   
   // Get the valid passcode from environment variable
   const validPasscode = process.env.APP_PASSCODE;

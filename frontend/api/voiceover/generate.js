@@ -12,7 +12,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { script, voiceId } = req.body;
+    // Parse body if it's a string
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (e) { body = {}; }
+    }
+    
+    const { script, voiceId } = body || {};
     
     // Use environment variable for API key
     const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
