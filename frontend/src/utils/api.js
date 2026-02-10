@@ -61,21 +61,11 @@ export const checkHealth = async () => {
  * @param {string} params.orientation - 'vertical' or 'horizontal'
  */
 export const generateScene = async ({ referenceImage, useDefaultReference, prompt, orientation }) => {
-  const formData = new FormData();
-
-  if (referenceImage) {
-    formData.append('referenceImage', referenceImage);
-  }
-  formData.append('prompt', prompt);
-  formData.append('orientation', orientation);
-  if (useDefaultReference) {
-    formData.append('useDefaultReference', 'true');
-  }
-
-  const response = await api.post('/scene/generate', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data'
-    }
+  // Send as JSON - the backend uses URL-based references, not file uploads
+  const response = await api.post('/scene/generate', {
+    prompt,
+    orientation,
+    useDefaultReference: useDefaultReference ? true : false
   });
 
   return response.data.data;
