@@ -105,10 +105,23 @@ export default async function handler(req, res) {
     let imageContentType = sceneImageContentType || 'image/png';
     
     if (sceneImageUrl) {
+      // Convert relative URLs to absolute URLs
+      let absoluteImageUrl = sceneImageUrl;
+      if (sceneImageUrl.startsWith('/')) {
+        // Get the base URL from request headers or use environment variable
+        const host = req.headers.host || req.headers['x-forwarded-host'];
+        const protocol = req.headers['x-forwarded-proto'] || 'https';
+        const baseUrl = process.env.VERCEL_URL 
+          ? `https://${process.env.VERCEL_URL}` 
+          : (host ? `${protocol}://${host}` : 'https://ai-clones-webapp.vercel.app');
+        absoluteImageUrl = `${baseUrl}${sceneImageUrl}`;
+        console.log('[HeyGen] Converted relative URL to:', absoluteImageUrl);
+      }
+      
       // Fetch image server-side (avoids CORS issues)
-      console.log('[HeyGen] Fetching scene image from URL:', sceneImageUrl);
+      console.log('[HeyGen] Fetching scene image from URL:', absoluteImageUrl);
       try {
-        const imageResponse = await fetch(sceneImageUrl);
+        const imageResponse = await fetch(absoluteImageUrl);
         if (!imageResponse.ok) {
           throw new Error(`Failed to fetch image: ${imageResponse.status}`);
         }
