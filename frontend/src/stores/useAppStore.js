@@ -118,10 +118,10 @@ const useAppStore = create((set, get) => ({
   },
   
   // ============ API KEYS CHECK ============
+  // API keys are now stored as environment variables on the server
+  // No local API keys required from the user
   hasRequiredApiKeys: () => {
-    const { apiKeys } = get();
-    return !!(apiKeys.heygenApiKey && apiKeys.heygenApiKey.trim().length > 0 &&
-              apiKeys.elevenLabsApiKey && apiKeys.elevenLabsApiKey.trim().length > 0);
+    return true; // Always return true - keys are on the server
   }
 }));
 
