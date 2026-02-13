@@ -66,10 +66,12 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         text: script,
-        model_id: 'eleven_monolingual_v1',
+        model_id: 'eleven_multilingual_v2', // Upgraded to newer, higher quality model
         voice_settings: {
           stability: 0.5,
-          similarity_boost: 0.75
+          similarity_boost: 0.85, // Increased for better voice matching
+          style: 0.0, // Natural speaking style
+          use_speaker_boost: true // Enhanced clarity
         }
       })
     });
