@@ -110,9 +110,32 @@ function SceneGenerator({ onSceneGenerated }) {
         throw new Error('Invalid response from server - no image URL received');
       }
 
+      // Fetch the image and convert to base64 for permanent storage
+      console.log('[SceneGenerator] Fetching image for permanent storage...');
+      let imageData = null;
+      let imageContentType = 'image/png';
+      try {
+        const imageResponse = await fetch(result.imageUrl);
+        if (imageResponse.ok) {
+          const blob = await imageResponse.blob();
+          imageContentType = blob.type || 'image/png';
+          imageData = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result.split(',')[1]); // base64 only
+            reader.readAsDataURL(blob);
+          });
+          console.log('[SceneGenerator] Image stored as base64, size:', imageData.length);
+        }
+      } catch (fetchError) {
+        console.warn('[SceneGenerator] Could not fetch image for storage:', fetchError);
+        // Continue without base64 - will use URL as fallback
+      }
+
       const scene = {
         id: result.id || uuidv4(),
         imageUrl: result.imageUrl,
+        imageData, // Store base64 data for permanent access
+        imageContentType,
         prompt: prompt.trim(),
         orientation,
         timestamp: Date.now(),
@@ -121,7 +144,7 @@ function SceneGenerator({ onSceneGenerated }) {
 
       // Save to IndexedDB
       await saveScene(scene);
-      console.log('[SceneGenerator] Scene saved to IndexedDB');
+      console.log('[SceneGenerator] Scene saved to IndexedDB with base64 data');
       setGeneratedScene(scene);
       toast.success('Scene generated successfully!');
     } catch (error) {

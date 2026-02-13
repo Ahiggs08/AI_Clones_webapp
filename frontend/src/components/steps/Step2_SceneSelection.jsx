@@ -26,7 +26,28 @@ function Step2_SceneSelection() {
     }
   }, [setCurrentStep, canProceedToStep2, navigate]);
 
-  const handleSceneSelect = (scene) => {
+  const handleSceneSelect = async (scene) => {
+    // If scene doesn't have base64 data, fetch and store it
+    if (!scene.imageData && scene.imageUrl) {
+      console.log('[SceneSelection] Fetching image for permanent storage...');
+      try {
+        const imageResponse = await fetch(scene.imageUrl);
+        if (imageResponse.ok) {
+          const blob = await imageResponse.blob();
+          const imageContentType = blob.type || 'image/png';
+          const imageData = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+            reader.readAsDataURL(blob);
+          });
+          // Update scene with base64 data
+          scene = { ...scene, imageData, imageContentType };
+          console.log('[SceneSelection] Image stored as base64');
+        }
+      } catch (err) {
+        console.warn('[SceneSelection] Could not fetch image:', err);
+      }
+    }
     setSelectedScene(scene);
   };
 

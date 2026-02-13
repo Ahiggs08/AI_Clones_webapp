@@ -65,9 +65,12 @@ function Step4_VideoGenerator() {
   const handleSingleVideoGeneration = async () => {
     setVideoStatusMessage('Starting video generation...');
     
-    // Send image URL to backend - it will fetch server-side (avoids CORS)
+    // Send image data (base64) or URL to backend
+    // Prefer base64 data if available (never expires)
     const { jobId } = await generateVideo({
-      sceneImageUrl: selectedScene.imageUrl,
+      sceneImageData: selectedScene.imageData || null,
+      sceneImageContentType: selectedScene.imageContentType || 'image/png',
+      sceneImageUrl: selectedScene.imageData ? null : selectedScene.imageUrl, // Only use URL if no base64
       audioData: voiceover.audioData,
       audioContentType: voiceover.contentType || 'audio/mpeg',
       heygenApiKey: apiKeys.heygenApiKey
@@ -105,7 +108,9 @@ function Step4_VideoGenerator() {
       
       try {
         const { jobId } = await generateVideo({
-          sceneImageUrl: selectedScene.imageUrl,
+          sceneImageData: selectedScene.imageData || null,
+          sceneImageContentType: selectedScene.imageContentType || 'image/png',
+          sceneImageUrl: selectedScene.imageData ? null : selectedScene.imageUrl,
           audioData: chunk.audioData,
           audioContentType: chunk.contentType || 'audio/mpeg',
           heygenApiKey: apiKeys.heygenApiKey
