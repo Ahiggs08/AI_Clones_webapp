@@ -121,8 +121,14 @@ export default async function handler(req, res) {
       // Fetch image server-side (avoids CORS issues)
       console.log('[HeyGen] Fetching scene image from URL:', absoluteImageUrl);
       try {
-        const imageResponse = await fetch(absoluteImageUrl);
+        const imageResponse = await fetch(absoluteImageUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'image/*,*/*'
+          }
+        });
         if (!imageResponse.ok) {
+          console.error('[HeyGen] Image fetch failed with status:', imageResponse.status, 'URL:', absoluteImageUrl);
           throw new Error(`Failed to fetch image: ${imageResponse.status}`);
         }
         const arrayBuffer = await imageResponse.arrayBuffer();
@@ -130,8 +136,12 @@ export default async function handler(req, res) {
         imageContentType = imageResponse.headers.get('content-type') || 'image/png';
         console.log('[HeyGen] Image fetched, size:', imageBuffer.length, 'bytes, type:', imageContentType);
       } catch (fetchError) {
-        console.error('[HeyGen] Image fetch failed:', fetchError.message);
-        return res.status(500).json({ error: { message: 'Failed to fetch scene image: ' + fetchError.message } });
+        console.error('[HeyGen] Image fetch failed:', fetchError.message, 'URL:', absoluteImageUrl);
+        // Provide helpful error message for expired/protected images
+        const errorMsg = fetchError.message.includes('401') 
+          ? 'Scene image has expired or is protected. Please select a default scene or generate a new scene.'
+          : 'Failed to fetch scene image: ' + fetchError.message;
+        return res.status(500).json({ error: { message: errorMsg } });
       }
     } else {
       // Use base64 data directly
