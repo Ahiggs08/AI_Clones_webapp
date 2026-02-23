@@ -53,7 +53,7 @@ function Step4_VideoGenerator() {
         await handleSingleVideoGeneration();
       }
     } catch (error) {
-      console.error('Video generation error:', error);
+      console.error('Video generation error:', error?.message || error, error?.code || '', error?.step || '');
       toast.error(error.message || 'Failed to generate video');
     } finally {
       setIsGeneratingVideo(false);

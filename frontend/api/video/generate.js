@@ -1,10 +1,39 @@
 // HeyGen Talking Photo Video Generation API
 // Uses HeyGen's Talking Photo feature for high-quality avatar videos
 
-// Upload buffer to catbox.moe (for audio hosting)
+// Upload audio to HeyGen's asset storage (returns a public URL)
+const uploadAudioToHeyGen = async (audioBuffer, contentType, apiKey) => {
+  console.log('[HeyGen] Uploading audio asset, size:', audioBuffer.length, 'bytes, type:', contentType);
+
+  const response = await fetch('https://upload.heygen.com/v1/asset', {
+    method: 'POST',
+    headers: {
+      'X-Api-Key': apiKey,
+      'Content-Type': contentType
+    },
+    body: audioBuffer
+  });
+
+  const result = await response.json();
+  console.log('[HeyGen] Audio asset upload response:', JSON.stringify(result));
+
+  if (result.data?.url) {
+    return result.data.url;
+  }
+  if (result.data?.asset_id) {
+    // Construct URL from asset_id if direct URL not provided
+    return `https://resource2.heygen.ai/audio/${result.data.asset_id}/original`;
+  }
+  if (result.error) {
+    throw new Error(result.error.message || result.error.code || 'Audio upload failed');
+  }
+  throw new Error('Failed to upload audio to HeyGen: ' + JSON.stringify(result));
+};
+
+// Upload buffer to catbox.moe (fallback for audio hosting)
 const uploadToCatbox = async (buffer, contentType, filename) => {
   const boundary = '----WebKitFormBoundary' + Math.random().toString(36).substring(2);
-  
+
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\n`),
     Buffer.from(`Content-Disposition: form-data; name="reqtype"\r\n\r\n`),
@@ -15,13 +44,13 @@ const uploadToCatbox = async (buffer, contentType, filename) => {
     buffer,
     Buffer.from(`\r\n--${boundary}--\r\n`)
   ]);
-  
+
   const response = await fetch('https://catbox.moe/user/api.php', {
     method: 'POST',
     headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
     body: body
   });
-  
+
   const result = await response.text();
   if (result && result.startsWith('http')) return result.trim();
   throw new Error('Catbox upload failed: ' + result);
@@ -30,7 +59,7 @@ const uploadToCatbox = async (buffer, contentType, filename) => {
 // Upload image to HeyGen as Talking Photo (raw binary upload)
 const uploadTalkingPhoto = async (imageBuffer, contentType, apiKey) => {
   console.log('[HeyGen] Uploading talking photo, size:', imageBuffer.length, 'bytes');
-  
+
   const uploadResponse = await fetch('https://upload.heygen.com/v1/talking_photo', {
     method: 'POST',
     headers: {
@@ -39,17 +68,17 @@ const uploadTalkingPhoto = async (imageBuffer, contentType, apiKey) => {
     },
     body: imageBuffer
   });
-  
+
   const uploadResult = await uploadResponse.json();
   console.log('[HeyGen] Talking photo upload response:', JSON.stringify(uploadResult));
-  
+
   if (uploadResult.data?.talking_photo_id) {
     return uploadResult.data.talking_photo_id;
   }
   if (uploadResult.error) {
     throw new Error(uploadResult.error.message || uploadResult.error.code || 'Upload failed');
   }
-  
+
   throw new Error('Failed to upload talking photo: ' + JSON.stringify(uploadResult));
 };
 
@@ -61,17 +90,20 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: { message: 'Method not allowed' } });
 
+  let step = 'init';
   try {
     // Parse body if it's a string
     let body = req.body;
     if (typeof body === 'string') {
       try { body = JSON.parse(body); } catch (e) { body = {}; }
     }
-    
+
     let { sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType } = body || {};
-    
+
     // Use environment variable for API key
     const heygenApiKey = process.env.HEYGEN_API_KEY;
+
+    console.log('[HeyGen] Request received - hasImageUrl:', !!sceneImageUrl, 'hasImageData:', !!sceneImageData, 'hasAudioData:', !!audioData, 'hasApiKey:', !!heygenApiKey);
 
     if (!sceneImageUrl && !sceneImageData) {
       return res.status(400).json({ error: { message: 'Scene image URL or data is required' } });
@@ -88,38 +120,55 @@ export default async function handler(req, res) {
       });
     }
 
-    // Upload audio to catbox (HeyGen needs a public URL)
-    console.log('[HeyGen] Uploading audio to catbox...');
+    // Upload audio - try HeyGen asset upload first, fall back to Catbox
+    step = 'audio-upload';
+    console.log('[HeyGen] Step 1: Uploading audio...');
     let audioUrl;
+    const audioBuffer = Buffer.from(audioData, 'base64');
+    const audioMime = audioContentType || 'audio/mpeg';
+    console.log('[HeyGen] Audio buffer size:', audioBuffer.length, 'bytes');
+
     try {
-      const audioBuffer = Buffer.from(audioData, 'base64');
-      audioUrl = await uploadToCatbox(audioBuffer, audioContentType || 'audio/mpeg', 'audio.mp3');
-      console.log('[HeyGen] Audio uploaded to:', audioUrl);
-    } catch (uploadError) {
-      console.error('[HeyGen] Audio upload failed:', uploadError.message);
-      return res.status(500).json({ error: { message: 'Failed to upload audio file: ' + uploadError.message } });
+      audioUrl = await uploadAudioToHeyGen(audioBuffer, audioMime, heygenApiKey);
+      console.log('[HeyGen] Audio uploaded to HeyGen:', audioUrl);
+    } catch (heygenUploadError) {
+      console.warn('[HeyGen] HeyGen audio upload failed, trying Catbox fallback:', heygenUploadError.message);
+      try {
+        audioUrl = await uploadToCatbox(audioBuffer, audioMime, 'audio.mp3');
+        console.log('[HeyGen] Audio uploaded to Catbox:', audioUrl);
+      } catch (catboxError) {
+        console.error('[HeyGen] Both audio upload methods failed');
+        console.error('[HeyGen] HeyGen error:', heygenUploadError.message);
+        console.error('[HeyGen] Catbox error:', catboxError.message);
+        return res.status(500).json({ error: { message: 'Failed to upload audio. Please try again.', step } });
+      }
     }
 
-    // Get image buffer - either from URL (fetch server-side) or from base64 data
+    // Get image buffer - either from base64 data or URL
+    step = 'image-prepare';
     let imageBuffer;
     let imageContentType = sceneImageContentType || 'image/png';
-    
-    if (sceneImageUrl) {
+
+    if (sceneImageData) {
+      // Prefer base64 data (always available, never expires)
+      console.log('[HeyGen] Step 2: Using provided base64 image data');
+      imageBuffer = Buffer.from(sceneImageData, 'base64');
+      console.log('[HeyGen] Image buffer size:', imageBuffer.length, 'bytes, type:', imageContentType);
+    } else if (sceneImageUrl) {
       // Convert relative URLs to absolute URLs
       let absoluteImageUrl = sceneImageUrl;
       if (sceneImageUrl.startsWith('/')) {
-        // Get the base URL from request headers or use environment variable
         const host = req.headers.host || req.headers['x-forwarded-host'];
         const protocol = req.headers['x-forwarded-proto'] || 'https';
-        const baseUrl = process.env.VERCEL_URL 
-          ? `https://${process.env.VERCEL_URL}` 
+        const baseUrl = process.env.VERCEL_URL
+          ? `https://${process.env.VERCEL_URL}`
           : (host ? `${protocol}://${host}` : 'https://ai-clones-webapp.vercel.app');
         absoluteImageUrl = `${baseUrl}${sceneImageUrl}`;
         console.log('[HeyGen] Converted relative URL to:', absoluteImageUrl);
       }
-      
+
       // Fetch image server-side (avoids CORS issues)
-      console.log('[HeyGen] Fetching scene image from URL:', absoluteImageUrl);
+      console.log('[HeyGen] Step 2: Fetching scene image from URL:', absoluteImageUrl);
       try {
         const imageResponse = await fetch(absoluteImageUrl, {
           headers: {
@@ -129,7 +178,7 @@ export default async function handler(req, res) {
         });
         if (!imageResponse.ok) {
           console.error('[HeyGen] Image fetch failed with status:', imageResponse.status, 'URL:', absoluteImageUrl);
-          throw new Error(`Failed to fetch image: ${imageResponse.status}`);
+          throw new Error(`Failed to fetch image: HTTP ${imageResponse.status}`);
         }
         const arrayBuffer = await imageResponse.arrayBuffer();
         imageBuffer = Buffer.from(arrayBuffer);
@@ -137,32 +186,30 @@ export default async function handler(req, res) {
         console.log('[HeyGen] Image fetched, size:', imageBuffer.length, 'bytes, type:', imageContentType);
       } catch (fetchError) {
         console.error('[HeyGen] Image fetch failed:', fetchError.message, 'URL:', absoluteImageUrl);
-        // Provide helpful error message for expired/protected images
-        const errorMsg = fetchError.message.includes('401') 
+        const errorMsg = fetchError.message.includes('401')
           ? 'Scene image has expired or is protected. Please select a default scene or generate a new scene.'
           : 'Failed to fetch scene image: ' + fetchError.message;
-        return res.status(500).json({ error: { message: errorMsg } });
+        return res.status(500).json({ error: { message: errorMsg, step } });
       }
-    } else {
-      // Use base64 data directly
-      console.log('[HeyGen] Using provided base64 image data');
-      imageBuffer = Buffer.from(sceneImageData, 'base64');
     }
 
     // Upload image to HeyGen as Talking Photo
+    step = 'heygen-upload';
     let talkingPhotoId;
     try {
-      console.log('[HeyGen] Uploading talking photo...');
+      console.log('[HeyGen] Step 3: Uploading talking photo...');
       talkingPhotoId = await uploadTalkingPhoto(imageBuffer, imageContentType, heygenApiKey);
       console.log('[HeyGen] Talking photo ID:', talkingPhotoId);
     } catch (uploadError) {
       console.error('[HeyGen] Talking photo upload failed:', uploadError.message);
-      return res.status(500).json({ error: { message: 'Failed to upload image to HeyGen: ' + uploadError.message } });
+      return res.status(500).json({ error: { message: 'HeyGen rejected the image: ' + uploadError.message, step } });
     }
 
     // Generate video with Talking Photo
-    console.log('[HeyGen] Starting video generation...');
-    
+    step = 'heygen-generate';
+    console.log('[HeyGen] Step 4: Starting video generation...');
+    console.log('[HeyGen] Params - talkingPhotoId:', talkingPhotoId, 'audioUrl:', audioUrl);
+
     const response = await fetch('https://api.heygen.com/v2/video/generate', {
       method: 'POST',
       headers: {
@@ -186,27 +233,31 @@ export default async function handler(req, res) {
         }
       })
     });
-    
+
     const heygenResult = await response.json();
+    console.log('[HeyGen] Video generation response status:', response.status);
     console.log('[HeyGen] Video generation response:', JSON.stringify(heygenResult));
-    
+
     if (heygenResult.data?.video_id) {
       return res.json({
         success: true,
-        data: { 
-          jobId: heygenResult.data.video_id, 
-          audioUrl, 
-          talkingPhotoId 
+        data: {
+          jobId: heygenResult.data.video_id,
+          audioUrl,
+          talkingPhotoId
         }
       });
     } else if (heygenResult.error) {
-      throw new Error(heygenResult.error.message || heygenResult.error.code || 'HeyGen API error');
+      const errMsg = heygenResult.error.message || heygenResult.error.code || 'HeyGen API error';
+      console.error('[HeyGen] API returned error:', errMsg);
+      return res.status(500).json({ error: { message: 'HeyGen: ' + errMsg, step } });
     } else {
-      throw new Error('Failed to start video generation: ' + JSON.stringify(heygenResult));
+      console.error('[HeyGen] Unexpected response:', JSON.stringify(heygenResult));
+      return res.status(500).json({ error: { message: 'Unexpected HeyGen response: ' + JSON.stringify(heygenResult).substring(0, 200), step } });
     }
-    
+
   } catch (error) {
-    console.error('[HeyGen] Generation error:', error.message);
-    res.status(500).json({ error: { message: error.message || 'Failed to start video generation' } });
+    console.error(`[HeyGen] Error at step "${step}":`, error.message, error.stack);
+    res.status(500).json({ error: { message: error.message || 'Failed to start video generation', step } });
   }
 }
