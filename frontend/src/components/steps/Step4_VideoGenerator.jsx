@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 import AudioPlayer from '../AudioPlayer';
 import { generateVideo, pollVideoStatus } from '../../utils/api';
-import { stitchVideos, isFFmpegSupported } from '../../utils/videoStitcher';
+import { stitchVideos, isFFmpegSupported, loadFFmpeg } from '../../utils/videoStitcher';
 import { saveProject } from '../../utils/db';
 import useAppStore from '../../stores/useAppStore';
 
@@ -192,102 +192,51 @@ function Step4_VideoGenerator() {
   const [isProcessingDownload, setIsProcessingDownload] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
 
-  // Crop video to remove bottom watermark using canvas (with audio)
-  const cropVideo = async (videoUrl) => {
-    return new Promise((resolve, reject) => {
-      const video = document.createElement('video');
-      video.crossOrigin = 'anonymous';
-      video.src = videoUrl;
-      video.muted = false;
-      video.volume = 0.01; // Very quiet but not muted (muted prevents audio capture)
-      
-      video.onloadedmetadata = async () => {
-        const originalWidth = video.videoWidth;
-        const originalHeight = video.videoHeight;
-        
-        // Crop bottom 12% to remove watermark
-        const cropPercent = 0.12;
-        const newHeight = Math.floor(originalHeight * (1 - cropPercent));
-        
-        const canvas = document.createElement('canvas');
-        canvas.width = originalWidth;
-        canvas.height = newHeight;
-        const ctx = canvas.getContext('2d');
-        
-        // Get video stream from canvas (video only)
-        const canvasStream = canvas.captureStream(30);
-        
-        // Try to get audio from video element's captureStream
-        let audioTracks = [];
-        try {
-          // This captures both video and audio from the video element
-          const videoStream = video.captureStream ? video.captureStream() : video.mozCaptureStream();
-          audioTracks = videoStream.getAudioTracks();
-          console.log('Captured audio tracks:', audioTracks.length);
-        } catch (e) {
-          console.warn('Could not capture audio from video:', e);
-        }
-        
-        // Combine canvas video with original audio
-        const combinedStream = new MediaStream([
-          ...canvasStream.getVideoTracks(),
-          ...audioTracks
-        ]);
-        
-        console.log('Combined stream tracks - video:', combinedStream.getVideoTracks().length, 'audio:', combinedStream.getAudioTracks().length);
-        
-        const mediaRecorder = new MediaRecorder(combinedStream, {
-          mimeType: 'video/webm;codecs=vp9,opus',
-          videoBitsPerSecond: 5000000,
-          audioBitsPerSecond: 128000
-        });
-        
-        const chunks = [];
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) chunks.push(e.data);
-        };
-        
-        mediaRecorder.onstop = () => {
-          const blob = new Blob(chunks, { type: 'video/webm' });
-          resolve(blob);
-        };
-        
-        mediaRecorder.onerror = reject;
-        
-        // Start recording
-        mediaRecorder.start(100); // Collect data every 100ms
-        
-        const drawFrame = () => {
-          if (video.paused || video.ended) {
-            return;
-          }
-          
-          // Draw only the top portion (cropping bottom)
-          ctx.drawImage(
-            video,
-            0, 0, originalWidth, newHeight,
-            0, 0, originalWidth, newHeight
-          );
-          
-          const progress = (video.currentTime / video.duration) * 100;
-          setDownloadProgress(Math.round(progress));
-          
-          requestAnimationFrame(drawFrame);
-        };
-        
-        video.onplay = () => {
-          drawFrame();
-        };
-        
-        video.onended = () => {
-          setTimeout(() => mediaRecorder.stop(), 200);
-        };
-        
-        video.play().catch(reject);
-      };
-      
-      video.onerror = reject;
+  // Crop video to remove bottom watermark using FFmpeg (outputs MP4)
+  const cropVideoMP4 = async (videoUrl) => {
+    const { fetchFile } = await import('@ffmpeg/util');
+
+    setDownloadProgress(5);
+    const ff = await loadFFmpeg((p) => {
+      setDownloadProgress(5 + Math.round(p * 0.2)); // 5-25% for loading
     });
+
+    setDownloadProgress(30);
+
+    // Download the video
+    console.log('[Download] Fetching video for cropping...');
+    const videoData = await fetchFile(videoUrl);
+    await ff.writeFile('input.mp4', videoData);
+
+    setDownloadProgress(50);
+
+    // Crop bottom 12% using FFmpeg crop filter
+    // crop=w:h:x:y — keep full width, 88% of height, starting from top-left
+    console.log('[Download] Cropping video with FFmpeg...');
+    await ff.exec([
+      '-i', 'input.mp4',
+      '-vf', 'crop=in_w:in_h*0.88:0:0',
+      '-c:v', 'libx264',
+      '-preset', 'fast',
+      '-crf', '23',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-movflags', '+faststart',
+      'output.mp4'
+    ]);
+
+    setDownloadProgress(90);
+
+    // Read the output
+    const data = await ff.readFile('output.mp4');
+
+    // Clean up
+    await ff.deleteFile('input.mp4');
+    await ff.deleteFile('output.mp4');
+
+    setDownloadProgress(100);
+
+    return new Blob([data.buffer], { type: 'video/mp4' });
   };
 
   const handleDownload = async () => {
@@ -296,29 +245,40 @@ function Step4_VideoGenerator() {
     try {
       setIsProcessingDownload(true);
       setDownloadProgress(0);
-      toast.loading('Processing video for download...', { id: 'download-progress' });
-      
-      // Crop the video to remove watermark
-      const croppedBlob = await cropVideo(generatedVideo.videoUrl);
-      
+
+      let blob;
+      let filename;
+
+      if (isFFmpegSupported()) {
+        toast.loading('Processing video as MP4...', { id: 'download-progress' });
+        blob = await cropVideoMP4(generatedVideo.videoUrl);
+        filename = `ai-clone-video-${Date.now()}.mp4`;
+      } else {
+        // FFmpeg not supported — download original MP4 directly (keeps watermark)
+        toast.loading('Downloading video...', { id: 'download-progress' });
+        const response = await fetch(generatedVideo.videoUrl);
+        blob = await response.blob();
+        filename = `ai-clone-video-${Date.now()}.mp4`;
+      }
+
       toast.dismiss('download-progress');
-      
-      const url = URL.createObjectURL(croppedBlob);
+
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `ai-clone-video-${Date.now()}.webm`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      
+
       toast.success('Video downloaded!');
     } catch (error) {
       console.error('Download error:', error);
       toast.dismiss('download-progress');
       toast.error('Failed to process video. Downloading original...');
-      
-      // Fallback to original video
+
+      // Fallback to original video without cropping
       try {
         const response = await fetch(generatedVideo.videoUrl);
         const blob = await response.blob();
