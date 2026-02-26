@@ -1,5 +1,5 @@
-// HeyGen Talking Photo Video Generation API
-// Uses HeyGen's Talking Photo feature for high-quality avatar videos
+// Video Generation API — supports HeyGen and Kling Avatar v2 Pro (via kie.ai)
+// Provider is selected via body.provider ('heygen' default, 'kling' for Kling)
 
 // Upload audio to HeyGen's asset storage (returns a public URL)
 const uploadAudioToHeyGen = async (audioBuffer, contentType, apiKey) => {
@@ -82,6 +82,59 @@ const uploadTalkingPhoto = async (imageBuffer, contentType, apiKey) => {
   throw new Error('Failed to upload talking photo: ' + JSON.stringify(uploadResult));
 };
 
+// ============ KLING (via kie.ai) ============
+
+const generateWithKling = async (imageBuffer, imageContentType, audioBuffer, audioContentType) => {
+  const kieApiKey = process.env.KIE_API_KEY;
+  if (!kieApiKey) {
+    throw new Error('KIE_API_KEY not configured on server. Add it in Vercel environment variables.');
+  }
+
+  // Kie.ai needs publicly accessible URLs for both image and audio
+  // Upload both to Catbox (universal public URLs)
+  console.log('[Kling] Uploading image to Catbox...');
+  const imageExt = imageContentType.includes('png') ? 'scene.png' : 'scene.jpg';
+  const imageUrl = await uploadToCatbox(imageBuffer, imageContentType, imageExt);
+  console.log('[Kling] Image uploaded:', imageUrl);
+
+  console.log('[Kling] Uploading audio to Catbox...');
+  const audioExt = audioContentType.includes('wav') ? 'audio.wav' : 'audio.mp3';
+  const audioUrl = await uploadToCatbox(audioBuffer, audioContentType, audioExt);
+  console.log('[Kling] Audio uploaded:', audioUrl);
+
+  // Call kie.ai Jobs API with Kling Avatar v2 Pro model
+  console.log('[Kling] Creating task with kling/ai-avatar-pro...');
+  const response = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${kieApiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'kling/ai-avatar-pro',
+      input: {
+        image_url: imageUrl,
+        audio_url: audioUrl
+      }
+    })
+  });
+
+  const result = await response.json();
+  console.log('[Kling] createTask response:', JSON.stringify(result));
+
+  // Validate response
+  if (result.code !== 200 && result.code !== 0) {
+    throw new Error(result.msg || 'Kling task creation failed (code: ' + result.code + ')');
+  }
+
+  const taskId = result.data?.taskId;
+  if (!taskId) {
+    throw new Error('No taskId returned from kie.ai: ' + JSON.stringify(result));
+  }
+
+  return { jobId: taskId, provider: 'kling' };
+};
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -98,12 +151,10 @@ export default async function handler(req, res) {
       try { body = JSON.parse(body); } catch (e) { body = {}; }
     }
 
-    let { sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType } = body || {};
+    let { sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType, provider } = body || {};
+    provider = provider || 'heygen';
 
-    // Use environment variable for API key
-    const heygenApiKey = process.env.HEYGEN_API_KEY;
-
-    console.log('[HeyGen] Request received - hasImageUrl:', !!sceneImageUrl, 'hasImageData:', !!sceneImageData, 'hasAudioData:', !!audioData, 'hasApiKey:', !!heygenApiKey);
+    console.log(`[Video] Request received - provider: ${provider}, hasImageUrl:`, !!sceneImageUrl, 'hasImageData:', !!sceneImageData, 'hasAudioData:', !!audioData);
 
     if (!sceneImageUrl && !sceneImageData) {
       return res.status(400).json({ error: { message: 'Scene image URL or data is required' } });
@@ -112,11 +163,45 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: { message: 'Audio data is required' } });
     }
 
-    if (!heygenApiKey) {
-      console.log('[Video] No API key configured, using mock mode');
+    // Prepare buffers (needed by both providers)
+    const audioBuffer = Buffer.from(audioData, 'base64');
+    const audioMime = audioContentType || 'audio/mpeg';
+
+    // ========== KLING PROVIDER ==========
+    if (provider === 'kling') {
+      step = 'kling-prepare';
+      console.log('[Kling] Using Kling Avatar v2 Pro via kie.ai');
+
+      // Get image buffer
+      let imageBuffer;
+      let imageMime = sceneImageContentType || 'image/png';
+      if (sceneImageData) {
+        imageBuffer = Buffer.from(sceneImageData, 'base64');
+      } else if (sceneImageUrl) {
+        const imgResp = await fetch(sceneImageUrl);
+        if (!imgResp.ok) throw new Error(`Failed to fetch image: HTTP ${imgResp.status}`);
+        imageBuffer = Buffer.from(await imgResp.arrayBuffer());
+        imageMime = imgResp.headers.get('content-type') || imageMime;
+      }
+
+      step = 'kling-generate';
+      const klingResult = await generateWithKling(imageBuffer, imageMime, audioBuffer, audioMime);
+      console.log('[Kling] Task created successfully, jobId:', klingResult.jobId);
+
       return res.json({
         success: true,
-        data: { jobId: `mock-job-${Date.now()}` }
+        data: klingResult
+      });
+    }
+
+    // ========== HEYGEN PROVIDER (default) ==========
+    const heygenApiKey = process.env.HEYGEN_API_KEY;
+
+    if (!heygenApiKey) {
+      console.log('[Video] No HEYGEN_API_KEY configured, using mock mode');
+      return res.json({
+        success: true,
+        data: { jobId: `mock-job-${Date.now()}`, provider: 'heygen' }
       });
     }
 
@@ -124,8 +209,6 @@ export default async function handler(req, res) {
     step = 'audio-upload';
     console.log('[HeyGen] Step 1: Uploading audio...');
     let audioUrl;
-    const audioBuffer = Buffer.from(audioData, 'base64');
-    const audioMime = audioContentType || 'audio/mpeg';
     console.log('[HeyGen] Audio buffer size:', audioBuffer.length, 'bytes');
 
     try {
@@ -243,6 +326,7 @@ export default async function handler(req, res) {
         success: true,
         data: {
           jobId: heygenResult.data.video_id,
+          provider: 'heygen',
           audioUrl,
           talkingPhotoId
         }

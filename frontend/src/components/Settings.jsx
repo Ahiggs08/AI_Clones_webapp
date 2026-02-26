@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import { clearAllData, getStorageEstimate } from '../utils/db';
+import useAppStore from '../stores/useAppStore';
 
 function Settings({ onClose }) {
   const [storageInfo, setStorageInfo] = useState(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const { videoProvider, setVideoProvider, saveSettings } = useAppStore();
 
   useEffect(() => {
     // Get storage estimate
@@ -71,6 +73,70 @@ function Settings({ onClose }) {
                 All API integrations are set up and ready to use.
               </p>
             </div>
+          </div>
+        </div>
+
+        {/* Video Provider */}
+        <div className="mb-6 p-4 bg-slate-dark/50 rounded-lg">
+          <h3 className="text-sm font-medium text-text-secondary uppercase tracking-wider mb-3">
+            Video Provider
+          </h3>
+          <div className="space-y-2">
+            {/* HeyGen option */}
+            <button
+              onClick={() => {
+                setVideoProvider('heygen');
+                saveSettings({ videoProvider: 'heygen' });
+              }}
+              className={`w-full p-3 rounded-lg border text-left transition-all ${
+                videoProvider === 'heygen'
+                  ? 'border-electric bg-electric/10'
+                  : 'border-slate-medium/30 bg-obsidian/30 hover:border-slate-medium/60'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium text-text-primary">HeyGen</span>
+                  <span className="ml-2 text-xs text-text-muted">720p</span>
+                </div>
+                {videoProvider === 'heygen' && (
+                  <div className="w-5 h-5 rounded-full bg-electric flex items-center justify-center">
+                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-text-muted mt-1">Standard quality • Current default</p>
+            </button>
+
+            {/* Kling option */}
+            <button
+              onClick={() => {
+                setVideoProvider('kling');
+                saveSettings({ videoProvider: 'kling' });
+              }}
+              className={`w-full p-3 rounded-lg border text-left transition-all ${
+                videoProvider === 'kling'
+                  ? 'border-violet bg-violet/10'
+                  : 'border-slate-medium/30 bg-obsidian/30 hover:border-slate-medium/60'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium text-text-primary">Kling Avatar v2 Pro</span>
+                  <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-violet/20 text-violet">NEW</span>
+                </div>
+                {videoProvider === 'kling' && (
+                  <div className="w-5 h-5 rounded-full bg-violet flex items-center justify-center">
+                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-text-muted mt-1">1080p • 48fps • Higher quality & smoother motion</p>
+            </button>
           </div>
         </div>
 

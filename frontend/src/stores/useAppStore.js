@@ -12,11 +12,13 @@ const useAppStore = create((set, get) => ({
   
   // ============ SETTINGS ============
   lastUsedVoiceId: '',
+  videoProvider: 'heygen', // 'heygen' or 'kling'
   settingsLoaded: false,
   showSettings: false,
-  
+
   setShowSettings: (show) => set({ showSettings: show }),
   setLastUsedVoiceId: (voiceId) => set({ lastUsedVoiceId: voiceId }),
+  setVideoProvider: (provider) => set({ videoProvider: provider }),
   
   loadSettings: async () => {
     try {
@@ -27,6 +29,7 @@ const useAppStore = create((set, get) => ({
           elevenLabsApiKey: settings.elevenLabsApiKey || ''
         },
         lastUsedVoiceId: settings.lastUsedVoiceId || '',
+        videoProvider: settings.videoProvider || 'heygen',
         settingsLoaded: true
       });
     } catch (error) {
@@ -40,7 +43,8 @@ const useAppStore = create((set, get) => ({
     const settings = {
       heygenApiKey: newSettings.heygenApiKey ?? currentState.apiKeys.heygenApiKey,
       elevenLabsApiKey: newSettings.elevenLabsApiKey ?? currentState.apiKeys.elevenLabsApiKey,
-      lastUsedVoiceId: newSettings.lastUsedVoiceId ?? currentState.lastUsedVoiceId
+      lastUsedVoiceId: newSettings.lastUsedVoiceId ?? currentState.lastUsedVoiceId,
+      videoProvider: newSettings.videoProvider ?? currentState.videoProvider
     };
     
     await saveSettingsToDB(settings);
@@ -49,7 +53,8 @@ const useAppStore = create((set, get) => ({
         heygenApiKey: settings.heygenApiKey,
         elevenLabsApiKey: settings.elevenLabsApiKey
       },
-      lastUsedVoiceId: settings.lastUsedVoiceId
+      lastUsedVoiceId: settings.lastUsedVoiceId,
+      videoProvider: settings.videoProvider
     });
   },
   

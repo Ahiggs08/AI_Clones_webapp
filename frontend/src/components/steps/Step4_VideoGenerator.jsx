@@ -17,6 +17,7 @@ function Step4_VideoGenerator() {
     generatedVideo,
     setGeneratedVideo,
     apiKeys,
+    videoProvider,
     setCurrentStep,
     canProceedToStep4,
     isGeneratingVideo,
@@ -27,6 +28,8 @@ function Step4_VideoGenerator() {
     setVideoStatusMessage,
     reset
   } = useAppStore();
+
+  const providerLabel = videoProvider === 'kling' ? 'Kling Avatar v2 Pro' : 'HeyGen';
 
   const [isSavingProject, setIsSavingProject] = useState(false);
   const [projectSaved, setProjectSaved] = useState(false);
@@ -63,30 +66,35 @@ function Step4_VideoGenerator() {
   };
 
   const handleSingleVideoGeneration = async () => {
-    setVideoStatusMessage('Starting video generation...');
-    
+    setVideoStatusMessage(`Starting video generation with ${providerLabel}...`);
+
     // Send image data (base64) or URL to backend
     // Prefer base64 data if available (never expires)
     const { jobId } = await generateVideo({
       sceneImageData: selectedScene.imageData || null,
       sceneImageContentType: selectedScene.imageContentType || 'image/png',
-      sceneImageUrl: selectedScene.imageData ? null : selectedScene.imageUrl, // Only use URL if no base64
+      sceneImageUrl: selectedScene.imageData ? null : selectedScene.imageUrl,
       audioData: voiceover.audioData,
       audioContentType: voiceover.contentType || 'audio/mpeg',
-      heygenApiKey: apiKeys.heygenApiKey
+      heygenApiKey: apiKeys.heygenApiKey,
+      provider: videoProvider
     });
 
-    setVideoStatusMessage('Processing with HeyGen Avatar IV...');
-    
+    setVideoStatusMessage(`Processing with ${providerLabel}...`);
+
     const result = await pollVideoStatus(
       jobId,
       apiKeys.heygenApiKey,
-      (progress) => setVideoProgress(progress)
+      (progress) => setVideoProgress(progress),
+      3000,
+      900000,
+      videoProvider
     );
 
     setGeneratedVideo({
       videoUrl: result.videoUrl,
       jobId,
+      provider: videoProvider,
       generatedAt: new Date().toISOString()
     });
 
@@ -103,9 +111,9 @@ function Step4_VideoGenerator() {
       const chunk = chunks[i];
       const chunkNum = i + 1;
       
-      setVideoStatusMessage(`Generating video segment ${chunkNum}/${totalChunks}...`);
+      setVideoStatusMessage(`Generating segment ${chunkNum}/${totalChunks} with ${providerLabel}...`);
       setVideoProgress((i / totalChunks) * 60); // 0-60% for video generation
-      
+
       try {
         const { jobId } = await generateVideo({
           sceneImageData: selectedScene.imageData || null,
@@ -113,11 +121,12 @@ function Step4_VideoGenerator() {
           sceneImageUrl: selectedScene.imageData ? null : selectedScene.imageUrl,
           audioData: chunk.audioData,
           audioContentType: chunk.contentType || 'audio/mpeg',
-          heygenApiKey: apiKeys.heygenApiKey
+          heygenApiKey: apiKeys.heygenApiKey,
+          provider: videoProvider
         });
 
-        setVideoStatusMessage(`Processing segment ${chunkNum}/${totalChunks}...`);
-        
+        setVideoStatusMessage(`Processing segment ${chunkNum}/${totalChunks} with ${providerLabel}...`);
+
         const result = await pollVideoStatus(
           jobId,
           apiKeys.heygenApiKey,
@@ -125,7 +134,10 @@ function Step4_VideoGenerator() {
             const baseProgress = (i / totalChunks) * 60;
             const chunkProgress = (progress / 100) * (60 / totalChunks);
             setVideoProgress(baseProgress + chunkProgress);
-          }
+          },
+          3000,
+          900000,
+          videoProvider
         );
 
         if (result.videoUrl) {
@@ -155,6 +167,7 @@ function Step4_VideoGenerator() {
         videoUrl: videoUrls[0],
         isPartial: true,
         allVideoUrls: videoUrls,
+        provider: videoProvider,
         generatedAt: new Date().toISOString()
       });
       return;
@@ -172,6 +185,7 @@ function Step4_VideoGenerator() {
         videoBlob: combinedBlob,
         isStitched: true,
         segmentCount: totalChunks,
+        provider: videoProvider,
         generatedAt: new Date().toISOString()
       });
 
@@ -184,6 +198,7 @@ function Step4_VideoGenerator() {
         videoUrl: videoUrls[0],
         isPartial: true,
         allVideoUrls: videoUrls,
+        provider: videoProvider,
         generatedAt: new Date().toISOString()
       });
     }
@@ -248,13 +263,16 @@ function Step4_VideoGenerator() {
 
       let blob;
       let filename;
+      const isHeyGen = generatedVideo.provider !== 'kling';
 
-      if (isFFmpegSupported()) {
+      if (isHeyGen && isFFmpegSupported()) {
+        // HeyGen: crop bottom 12% to remove watermark
         toast.loading('Processing video as MP4...', { id: 'download-progress' });
         blob = await cropVideoMP4(generatedVideo.videoUrl);
         filename = `ai-clone-video-${Date.now()}.mp4`;
       } else {
-        // FFmpeg not supported — download original MP4 directly (keeps watermark)
+        // Kling: download directly (no watermark to crop)
+        // Also fallback for HeyGen when FFmpeg not supported
         toast.loading('Downloading video...', { id: 'download-progress' });
         const response = await fetch(generatedVideo.videoUrl);
         blob = await response.blob();
@@ -501,8 +519,11 @@ function Step4_VideoGenerator() {
               <h3 className="text-xl font-medium text-text-primary mb-2">
                 Ready to Generate
               </h3>
-              <p className="text-text-secondary mb-6">
+              <p className="text-text-secondary mb-2">
                 Your AI clone video will be created using the scene and voiceover above.
+              </p>
+              <p className={`text-xs font-medium mb-6 ${videoProvider === 'kling' ? 'text-violet' : 'text-electric'}`}>
+                Using {providerLabel} {videoProvider === 'kling' ? '• 1080p • 48fps' : '• 720p'}
               </p>
 
               <button
@@ -516,22 +537,36 @@ function Step4_VideoGenerator() {
         </div>
       ) : (
         <div className="glass-card overflow-hidden mb-8 animate-slide-up">
-          {/* Video Player - portrait video with bottom crop to hide watermark */}
+          {/* Video Player - portrait video */}
           <div className="max-w-md mx-auto">
-            <div className="relative overflow-hidden" style={{ paddingBottom: '160%' }}> {/* Cropped from 177.7% to hide bottom 10% */}
-              <video
-                id="generated-video"
-                src={generatedVideo.videoUrl}
-                controls
-                className="absolute top-0 left-0 w-full"
-                style={{ 
-                  height: '112%', // Video extends 12% below visible area to fully hide watermark
-                }}
-                poster={selectedScene?.imageUrl}
-              >
-                Your browser does not support the video tag.
-              </video>
-            </div>
+            {generatedVideo.provider === 'kling' ? (
+              /* Kling: show full video, no watermark crop needed */
+              <div className="relative overflow-hidden" style={{ paddingBottom: '177.7%' }}>
+                <video
+                  id="generated-video"
+                  src={generatedVideo.videoUrl}
+                  controls
+                  className="absolute top-0 left-0 w-full h-full"
+                  poster={selectedScene?.imageUrl}
+                >
+                  Your browser does not support the video tag.
+                </video>
+              </div>
+            ) : (
+              /* HeyGen: crop bottom 12% to hide watermark */
+              <div className="relative overflow-hidden" style={{ paddingBottom: '160%' }}>
+                <video
+                  id="generated-video"
+                  src={generatedVideo.videoUrl}
+                  controls
+                  className="absolute top-0 left-0 w-full"
+                  style={{ height: '112%' }}
+                  poster={selectedScene?.imageUrl}
+                >
+                  Your browser does not support the video tag.
+                </video>
+              </div>
+            )}
           </div>
 
           {/* Segment downloads if partial */}
