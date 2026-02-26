@@ -114,7 +114,8 @@ const generateWithKling = async (imageBuffer, imageContentType, audioBuffer, aud
       model: 'kling/ai-avatar-pro',
       input: {
         image_url: imageUrl,
-        audio_url: audioUrl
+        audio_url: audioUrl,
+        prompt: 'A person speaking naturally'
       }
     })
   });
