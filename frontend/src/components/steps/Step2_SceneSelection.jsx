@@ -6,13 +6,14 @@ import useAppStore from '../../stores/useAppStore';
 
 function Step2_SceneSelection() {
   const navigate = useNavigate();
-  const { 
-    script, 
-    selectedScene, 
-    setSelectedScene, 
-    setCurrentStep, 
+  const {
+    script,
+    selectedScenes,
+    addSelectedScene,
+    removeSelectedScene,
+    setCurrentStep,
     canProceedToStep2,
-    canProceedToStep3 
+    canProceedToStep3
   } = useAppStore();
   
   const [activeTab, setActiveTab] = useState('gallery');
@@ -27,6 +28,13 @@ function Step2_SceneSelection() {
   }, [setCurrentStep, canProceedToStep2, navigate]);
 
   const handleSceneSelect = async (scene) => {
+    // Toggle: if already selected, remove it
+    const existing = selectedScenes.find(s => s.id === scene.id);
+    if (existing) {
+      removeSelectedScene(scene.id);
+      return;
+    }
+
     // If scene doesn't have base64 data, fetch and store it
     if (!scene.imageData && scene.imageUrl) {
       console.log('[SceneSelection] Fetching image for permanent storage...');
@@ -40,7 +48,6 @@ function Step2_SceneSelection() {
             reader.onloadend = () => resolve(reader.result.split(',')[1]);
             reader.readAsDataURL(blob);
           });
-          // Update scene with base64 data
           scene = { ...scene, imageData, imageContentType };
           console.log('[SceneSelection] Image stored as base64');
         }
@@ -48,12 +55,11 @@ function Step2_SceneSelection() {
         console.warn('[SceneSelection] Could not fetch image:', err);
       }
     }
-    setSelectedScene(scene);
+    addSelectedScene(scene);
   };
 
   const handleSceneGenerated = (scene) => {
-    setSelectedScene(scene);
-    // Switch to gallery tab to show it's saved
+    addSelectedScene(scene);
     setActiveTab('gallery');
   };
 
@@ -72,10 +78,10 @@ function Step2_SceneSelection() {
       {/* Header */}
       <div className="mb-8">
         <h1 className="font-display text-3xl font-bold text-text-primary mb-2">
-          Choose Your Scene
+          Choose Your Scenes
         </h1>
         <p className="text-text-secondary">
-          Select an existing scene or generate a new AI avatar for your video.
+          Select one or more scenes. Multiple scenes let you create dynamic videos with different backgrounds.
         </p>
       </div>
 
@@ -127,29 +133,42 @@ function Step2_SceneSelection() {
         )}
       </div>
 
-      {/* Selected Scene Indicator */}
-      {selectedScene && (
+      {/* Selected Scenes Bar */}
+      {selectedScenes.length > 0 && (
         <div className="glass-card p-4 mb-6 border-electric/30 bg-electric/5 animate-fade-in">
-          <div className="flex items-center gap-4">
-            <img
-              src={selectedScene.imageUrl}
-              alt="Selected scene"
-              className="w-16 h-16 rounded-lg object-cover"
-            />
-            <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-medium text-electric mb-1">Scene Selected</h3>
-              <p className="text-text-secondary text-sm line-clamp-1">
-                {selectedScene.prompt}
-              </p>
-            </div>
-            <button
-              onClick={() => setSelectedScene(null)}
-              className="p-2 rounded-lg hover:bg-white/5 text-text-muted hover:text-text-primary transition-colors"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-electric">
+              {selectedScenes.length} {selectedScenes.length === 1 ? 'Scene' : 'Scenes'} Selected
+            </h3>
+            {selectedScenes.length > 1 && (
+              <span className="text-xs text-text-muted">
+                Multi-scene mode — segments will be assigned in Step 4
+              </span>
+            )}
+          </div>
+          <div className="flex gap-3 flex-wrap">
+            {selectedScenes.map((scene, index) => (
+              <div key={scene.id} className="relative group">
+                <div className="relative w-20 h-20 rounded-lg overflow-hidden border-2 border-electric/50">
+                  <img
+                    src={scene.imageUrl}
+                    alt={scene.prompt || `Scene ${index + 1}`}
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute top-1 left-1 w-5 h-5 rounded-full bg-electric text-void text-xs font-bold flex items-center justify-center">
+                    {index + 1}
+                  </div>
+                </div>
+                <button
+                  onClick={() => removeSelectedScene(scene.id)}
+                  className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-coral text-void flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}

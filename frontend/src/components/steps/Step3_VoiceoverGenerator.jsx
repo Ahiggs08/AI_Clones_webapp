@@ -10,7 +10,7 @@ function Step3_VoiceoverGenerator() {
   const navigate = useNavigate();
   const {
     script,
-    selectedScene,
+    selectedScenes,
     voiceover,
     setVoiceover,
     apiKeys,
@@ -273,14 +273,29 @@ function Step3_VoiceoverGenerator() {
       <div className="grid md:grid-cols-2 gap-4 mb-6">
         {/* Scene Preview */}
         <div className="glass-card p-4">
-          <h3 className="text-sm font-medium text-text-secondary mb-3">Selected Scene</h3>
-          <div className="aspect-video rounded-lg overflow-hidden bg-slate-dark">
-            <img
-              src={selectedScene?.imageUrl}
-              alt="Selected scene"
-              className="w-full h-full object-cover"
-            />
-          </div>
+          <h3 className="text-sm font-medium text-text-secondary mb-3">
+            {selectedScenes.length > 1 ? `${selectedScenes.length} Scenes` : 'Selected Scene'}
+          </h3>
+          {selectedScenes.length > 1 ? (
+            <div className="flex gap-2 flex-wrap">
+              {selectedScenes.map((scene, i) => (
+                <div key={scene.id} className="relative w-16 h-16 rounded-lg overflow-hidden bg-slate-dark">
+                  <img src={scene.imageUrl} alt={`Scene ${i + 1}`} className="w-full h-full object-cover" />
+                  <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-electric text-void text-[10px] font-bold flex items-center justify-center">
+                    {i + 1}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="aspect-video rounded-lg overflow-hidden bg-slate-dark">
+              <img
+                src={selectedScenes[0]?.imageUrl}
+                alt="Selected scene"
+                className="w-full h-full object-cover"
+              />
+            </div>
+          )}
         </div>
 
         {/* Script Preview */}

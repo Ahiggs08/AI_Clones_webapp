@@ -10,7 +10,7 @@ function SceneGallery({ onSelect }) {
   const [deletingId, setDeletingId] = useState(null);
   const [activeTab, setActiveTab] = useState('default'); // 'default' or 'custom'
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const { selectedScene } = useAppStore();
+  const { selectedScenes } = useAppStore();
 
   useEffect(() => {
     loadScenes();
@@ -149,7 +149,7 @@ function SceneGallery({ onSelect }) {
               onClick={() => onSelect(scene)}
               className={`
                 glass-card-hover overflow-hidden cursor-pointer animate-fade-in
-                ${selectedScene?.id === scene.id ? 'ring-2 ring-electric' : ''}
+                ${selectedScenes.some(s => s.id === scene.id) ? 'ring-2 ring-electric' : ''}
               `}
               style={{ animationDelay: `${index * 0.05}s` }}
             >
@@ -176,13 +176,11 @@ function SceneGallery({ onSelect }) {
                   </div>
                 </div>
 
-                {/* Selected Indicator */}
-                {selectedScene?.id === scene.id && (
+                {/* Selected Indicator with number */}
+                {selectedScenes.some(s => s.id === scene.id) && (
                   <div className="absolute inset-0 bg-electric/10 flex items-center justify-center">
-                    <div className="bg-electric text-void rounded-full p-2">
-                      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
+                    <div className="bg-electric text-void rounded-full w-10 h-10 flex items-center justify-center font-bold text-lg">
+                      {selectedScenes.findIndex(s => s.id === scene.id) + 1}
                     </div>
                   </div>
                 )}

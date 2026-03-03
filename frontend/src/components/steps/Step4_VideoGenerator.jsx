@@ -1,21 +1,44 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 import AudioPlayer from '../AudioPlayer';
-import { generateVideo, pollVideoStatus } from '../../utils/api';
-import { stitchVideos, isFFmpegSupported } from '../../utils/videoStitcher';
+import { generateVideo, pollVideoStatus, generateVoiceover } from '../../utils/api';
+import { stitchVideos, stitchVideosWithTransitions, isFFmpegSupported } from '../../utils/videoStitcher';
+import { estimateAudioDuration } from '../../utils/scriptChunker';
 import { saveProject } from '../../utils/db';
 import useAppStore from '../../stores/useAppStore';
+
+// Split script into sentences for the segment builder
+const splitIntoSentences = (text) => {
+  if (!text) return [];
+  const sentences = [];
+  const regex = /[^.!?]*[.!?]+[\s]*/g;
+  let match;
+  let lastIndex = 0;
+
+  while ((match = regex.exec(text)) !== null) {
+    sentences.push(match[0].trim());
+    lastIndex = regex.lastIndex;
+  }
+
+  // Add remaining text if any
+  const remaining = text.slice(lastIndex).trim();
+  if (remaining) sentences.push(remaining);
+
+  return sentences.filter(s => s.length > 0);
+};
 
 function Step4_VideoGenerator() {
   const navigate = useNavigate();
   const {
     script,
-    selectedScene,
+    selectedScenes,
     voiceover,
     generatedVideo,
     setGeneratedVideo,
+    segments,
+    setSegments,
     setCurrentStep,
     canProceedToStep4,
     isGeneratingVideo,
@@ -31,6 +54,12 @@ function Step4_VideoGenerator() {
   const [projectSaved, setProjectSaved] = useState(false);
   const [isProcessingDownload, setIsProcessingDownload] = useState(false);
 
+  const isMultiScene = selectedScenes.length > 1;
+  const primaryScene = selectedScenes[0] || null;
+
+  // Parse sentences from the script for the segment builder
+  const sentences = useMemo(() => splitIntoSentences(script), [script]);
+
   useEffect(() => {
     setCurrentStep(4);
 
@@ -39,6 +68,81 @@ function Step4_VideoGenerator() {
     }
   }, [setCurrentStep, canProceedToStep4, navigate]);
 
+  // Initialize segments when entering multi-scene mode
+  useEffect(() => {
+    if (isMultiScene && segments.length === 0 && sentences.length > 0) {
+      handleAutoSplit();
+    }
+  }, [isMultiScene, sentences.length]);
+
+  // Auto-split script into N segments (N = number of scenes)
+  const handleAutoSplit = () => {
+    const n = selectedScenes.length;
+    if (sentences.length === 0 || n === 0) return;
+
+    // Distribute sentences evenly across segments
+    const segmentsPerScene = Math.max(1, Math.floor(sentences.length / n));
+    const newSegments = [];
+
+    for (let i = 0; i < n; i++) {
+      const start = i * segmentsPerScene;
+      const end = i === n - 1 ? sentences.length : (i + 1) * segmentsPerScene;
+      const segmentText = sentences.slice(start, end).join(' ');
+
+      if (segmentText.trim()) {
+        newSegments.push({
+          id: `seg-${i}`,
+          text: segmentText,
+          sceneId: selectedScenes[i].id
+        });
+      }
+    }
+
+    setSegments(newSegments);
+  };
+
+  // Add a split point at a sentence boundary
+  const handleAddSplit = (segmentIndex, sentenceIndex) => {
+    const seg = segments[segmentIndex];
+    const segSentences = splitIntoSentences(seg.text);
+    if (sentenceIndex <= 0 || sentenceIndex >= segSentences.length) return;
+
+    const firstHalf = segSentences.slice(0, sentenceIndex).join(' ');
+    const secondHalf = segSentences.slice(sentenceIndex).join(' ');
+
+    const newSegments = [...segments];
+    newSegments.splice(segmentIndex, 1,
+      { id: `seg-${Date.now()}-a`, text: firstHalf, sceneId: seg.sceneId },
+      { id: `seg-${Date.now()}-b`, text: secondHalf, sceneId: '' }
+    );
+    setSegments(newSegments);
+  };
+
+  // Remove a split (merge segment with the next one)
+  const handleRemoveSplit = (segmentIndex) => {
+    if (segmentIndex >= segments.length - 1) return;
+    const newSegments = [...segments];
+    const merged = {
+      id: newSegments[segmentIndex].id,
+      text: newSegments[segmentIndex].text + ' ' + newSegments[segmentIndex + 1].text,
+      sceneId: newSegments[segmentIndex].sceneId
+    };
+    newSegments.splice(segmentIndex, 2, merged);
+    setSegments(newSegments);
+  };
+
+  // Assign a scene to a segment
+  const handleAssignScene = (segmentIndex, sceneId) => {
+    const newSegments = [...segments];
+    newSegments[segmentIndex] = { ...newSegments[segmentIndex], sceneId };
+    setSegments(newSegments);
+  };
+
+  // Check if all segments have scenes assigned
+  const allSegmentsAssigned = segments.length > 0 && segments.every(s => s.sceneId);
+
+  // ============ GENERATION ============
+
   const handleGenerate = async () => {
     setIsGeneratingVideo(true);
     setVideoProgress(0);
@@ -46,13 +150,15 @@ function Step4_VideoGenerator() {
     setGeneratedVideo(null);
 
     try {
-      if (voiceover.isChunked && voiceover.chunks && voiceover.chunks.length > 1) {
+      if (isMultiScene) {
+        await handleMultiSceneGeneration();
+      } else if (voiceover.isChunked && voiceover.chunks && voiceover.chunks.length > 1) {
         await handleChunkedVideoGeneration();
       } else {
         await handleSingleVideoGeneration();
       }
     } catch (error) {
-      console.error('Video generation error:', error?.message || error, error?.code || '', error?.step || '');
+      console.error('Video generation error:', error?.message || error);
       toast.error(error.message || 'Failed to generate video');
     } finally {
       setIsGeneratingVideo(false);
@@ -61,13 +167,15 @@ function Step4_VideoGenerator() {
     }
   };
 
+  // Single scene, single video
   const handleSingleVideoGeneration = async () => {
     setVideoStatusMessage('Starting video generation...');
 
+    const scene = primaryScene;
     const { jobId } = await generateVideo({
-      sceneImageData: selectedScene.imageData || null,
-      sceneImageContentType: selectedScene.imageContentType || 'image/png',
-      sceneImageUrl: selectedScene.imageData ? null : selectedScene.imageUrl,
+      sceneImageData: scene.imageData || null,
+      sceneImageContentType: scene.imageContentType || 'image/png',
+      sceneImageUrl: scene.imageData ? null : scene.imageUrl,
       audioData: voiceover.audioData,
       audioContentType: voiceover.contentType || 'audio/mpeg'
     });
@@ -88,10 +196,12 @@ function Step4_VideoGenerator() {
     toast.success('Video generated successfully!');
   };
 
+  // Single scene, chunked audio (long script)
   const handleChunkedVideoGeneration = async () => {
     const chunks = voiceover.chunks;
     const totalChunks = chunks.length;
     const videoUrls = [];
+    const scene = primaryScene;
 
     for (let i = 0; i < totalChunks; i++) {
       const chunk = chunks[i];
@@ -100,41 +210,33 @@ function Step4_VideoGenerator() {
       setVideoStatusMessage(`Generating segment ${chunkNum}/${totalChunks}...`);
       setVideoProgress((i / totalChunks) * 60);
 
-      try {
-        const { jobId } = await generateVideo({
-          sceneImageData: selectedScene.imageData || null,
-          sceneImageContentType: selectedScene.imageContentType || 'image/png',
-          sceneImageUrl: selectedScene.imageData ? null : selectedScene.imageUrl,
-          audioData: chunk.audioData,
-          audioContentType: chunk.contentType || 'audio/mpeg'
-        });
+      const { jobId } = await generateVideo({
+        sceneImageData: scene.imageData || null,
+        sceneImageContentType: scene.imageContentType || 'image/png',
+        sceneImageUrl: scene.imageData ? null : scene.imageUrl,
+        audioData: chunk.audioData,
+        audioContentType: chunk.contentType || 'audio/mpeg'
+      });
 
-        setVideoStatusMessage(`Processing segment ${chunkNum}/${totalChunks}...`);
+      setVideoStatusMessage(`Processing segment ${chunkNum}/${totalChunks}...`);
 
-        const result = await pollVideoStatus(
-          jobId,
-          (progress) => {
-            const baseProgress = (i / totalChunks) * 60;
-            const chunkProgress = (progress / 100) * (60 / totalChunks);
-            setVideoProgress(baseProgress + chunkProgress);
-          }
-        );
-
-        if (result.videoUrl) {
-          videoUrls.push(result.videoUrl);
-        } else {
-          throw new Error(`Segment ${chunkNum} failed: No video URL returned`);
+      const result = await pollVideoStatus(
+        jobId,
+        (progress) => {
+          const baseProgress = (i / totalChunks) * 60;
+          const chunkProgress = (progress / 100) * (60 / totalChunks);
+          setVideoProgress(baseProgress + chunkProgress);
         }
-      } catch (error) {
-        throw new Error(`Failed to generate segment ${chunkNum}: ${error.message}`);
+      );
+
+      if (result.videoUrl) {
+        videoUrls.push(result.videoUrl);
+      } else {
+        throw new Error(`Segment ${chunkNum} failed: No video URL returned`);
       }
     }
 
-    if (videoUrls.length !== totalChunks) {
-      throw new Error(`Only ${videoUrls.length} of ${totalChunks} segments completed`);
-    }
-
-    // Stitch videos together
+    // Stitch
     setVideoStatusMessage('Combining video segments...');
     setVideoProgress(65);
 
@@ -153,9 +255,7 @@ function Step4_VideoGenerator() {
       const combinedBlob = await stitchVideos(videoUrls, (progress) => {
         setVideoProgress(65 + (progress * 0.35));
       });
-
       const combinedUrl = URL.createObjectURL(combinedBlob);
-
       setGeneratedVideo({
         videoUrl: combinedUrl,
         videoBlob: combinedBlob,
@@ -163,7 +263,6 @@ function Step4_VideoGenerator() {
         segmentCount: totalChunks,
         generatedAt: new Date().toISOString()
       });
-
       toast.success(`Video generated! Combined ${totalChunks} segments.`);
     } catch (stitchError) {
       console.error('Stitching failed:', stitchError);
@@ -176,6 +275,108 @@ function Step4_VideoGenerator() {
       });
     }
   };
+
+  // Multi-scene generation: voiceover per segment -> video per segment -> stitch with transitions
+  const handleMultiSceneGeneration = async () => {
+    const totalSegments = segments.length;
+    const videoUrls = [];
+
+    for (let i = 0; i < totalSegments; i++) {
+      const segment = segments[i];
+      const scene = selectedScenes.find(s => s.id === segment.sceneId);
+      const segNum = i + 1;
+
+      if (!scene) {
+        throw new Error(`No scene assigned to segment ${segNum}`);
+      }
+
+      // Step 1: Generate voiceover for this segment
+      setVideoStatusMessage(`Generating voiceover for segment ${segNum}/${totalSegments}...`);
+      setVideoProgress((i / totalSegments) * 70);
+
+      let audioData, audioContentType;
+      try {
+        const voiceoverResult = await generateVoiceover({
+          script: segment.text,
+          voiceId: voiceover.voiceId
+        });
+        audioData = voiceoverResult.audioData;
+        audioContentType = voiceoverResult.contentType || 'audio/mpeg';
+      } catch (err) {
+        throw new Error(`Failed to generate voiceover for segment ${segNum}: ${err.message}`);
+      }
+
+      // Step 2: Generate video for this segment
+      setVideoStatusMessage(`Generating video for segment ${segNum}/${totalSegments}...`);
+
+      const { jobId } = await generateVideo({
+        sceneImageData: scene.imageData || null,
+        sceneImageContentType: scene.imageContentType || 'image/png',
+        sceneImageUrl: scene.imageData ? null : scene.imageUrl,
+        audioData,
+        audioContentType
+      });
+
+      setVideoStatusMessage(`Processing video for segment ${segNum}/${totalSegments}...`);
+
+      const result = await pollVideoStatus(
+        jobId,
+        (progress) => {
+          const baseProgress = (i / totalSegments) * 70;
+          const segProgress = (progress / 100) * (70 / totalSegments);
+          setVideoProgress(baseProgress + segProgress);
+        }
+      );
+
+      if (result.videoUrl) {
+        videoUrls.push(result.videoUrl);
+      } else {
+        throw new Error(`Segment ${segNum} failed: No video URL returned`);
+      }
+    }
+
+    // Stitch with transitions
+    setVideoStatusMessage('Combining segments with transitions...');
+    setVideoProgress(72);
+
+    if (!isFFmpegSupported()) {
+      toast.error('Your browser does not support video stitching. Showing first segment only.');
+      setGeneratedVideo({
+        videoUrl: videoUrls[0],
+        isPartial: true,
+        allVideoUrls: videoUrls,
+        generatedAt: new Date().toISOString()
+      });
+      return;
+    }
+
+    try {
+      const combinedBlob = await stitchVideosWithTransitions(videoUrls, (progress) => {
+        setVideoProgress(72 + (progress * 0.28));
+      });
+      const combinedUrl = URL.createObjectURL(combinedBlob);
+      setGeneratedVideo({
+        videoUrl: combinedUrl,
+        videoBlob: combinedBlob,
+        isStitched: true,
+        isMultiScene: true,
+        segmentCount: totalSegments,
+        generatedAt: new Date().toISOString()
+      });
+      toast.success(`Multi-scene video created! ${totalSegments} segments with transitions.`);
+    } catch (stitchError) {
+      console.error('Transition stitching failed:', stitchError);
+      toast.error('Failed to combine segments. You can download them individually.');
+      setGeneratedVideo({
+        videoUrl: videoUrls[0],
+        isPartial: true,
+        allVideoUrls: videoUrls,
+        generatedAt: new Date().toISOString()
+      });
+    }
+  };
+
+  // ============ POST-GENERATION ============
 
   const handleDownload = async () => {
     if (!generatedVideo?.videoUrl) return;
@@ -232,8 +433,8 @@ function Step4_VideoGenerator() {
         id: uuidv4(),
         name: `Video - ${new Date().toLocaleDateString()}`,
         script,
-        sceneId: selectedScene.id,
-        sceneImageUrl: selectedScene.imageUrl,
+        sceneId: primaryScene?.id,
+        sceneImageUrl: primaryScene?.imageUrl,
         voiceoverUrl: voiceover.audioUrl,
         voiceId: voiceover.voiceId,
         videoUrl: generatedVideo?.videoUrl,
@@ -259,8 +460,8 @@ function Step4_VideoGenerator() {
     navigate('/step/3');
   };
 
-  // Get chunk info for display
-  const chunkInfo = voiceover?.isChunked ? {
+  // Get chunk info for display (single-scene chunked mode)
+  const chunkInfo = !isMultiScene && voiceover?.isChunked ? {
     count: voiceover.chunks?.length || 0,
     estimatedTime: (voiceover.chunks?.length || 1) * 2
   } : null;
@@ -273,11 +474,13 @@ function Step4_VideoGenerator() {
           Generate Video
         </h1>
         <p className="text-text-secondary">
-          Review your selections and generate your AI clone video.
+          {isMultiScene
+            ? 'Assign scenes to script segments and generate your multi-scene video.'
+            : 'Review your selections and generate your AI clone video.'}
         </p>
       </div>
 
-      {/* Chunk Warning */}
+      {/* Chunk Warning (single-scene only) */}
       {chunkInfo && (
         <div className="glass-card p-4 mb-6 border border-yellow-500/30 bg-yellow-500/5">
           <div className="flex items-start gap-3">
@@ -290,7 +493,6 @@ function Step4_VideoGenerator() {
               </p>
               <p className="text-xs text-yellow-200/70 mt-1">
                 Each segment will be generated separately and combined automatically.
-                Estimated time: {chunkInfo.estimatedTime}-{chunkInfo.estimatedTime * 1.5} minutes.
               </p>
             </div>
           </div>
@@ -298,11 +500,13 @@ function Step4_VideoGenerator() {
       )}
 
       {/* Summary Cards */}
-      <div className="grid md:grid-cols-3 gap-4 mb-8">
-        {/* Scene */}
+      <div className={`grid ${isMultiScene ? 'md:grid-cols-2' : 'md:grid-cols-3'} gap-4 mb-8`}>
+        {/* Scene(s) */}
         <div className="glass-card p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-text-secondary">Scene</h3>
+            <h3 className="text-sm font-medium text-text-secondary">
+              {isMultiScene ? `${selectedScenes.length} Scenes` : 'Scene'}
+            </h3>
             <button
               onClick={() => navigate('/step/2')}
               className="text-xs text-electric hover:text-electric-dim transition-colors"
@@ -310,13 +514,22 @@ function Step4_VideoGenerator() {
               Edit
             </button>
           </div>
-          <div className="aspect-video rounded-lg overflow-hidden bg-slate-dark">
-            <img
-              src={selectedScene?.imageUrl}
-              alt="Selected scene"
-              className="w-full h-full object-cover"
-            />
-          </div>
+          {isMultiScene ? (
+            <div className="flex gap-2 flex-wrap">
+              {selectedScenes.map((scene, i) => (
+                <div key={scene.id} className="relative w-16 h-16 rounded-lg overflow-hidden bg-slate-dark">
+                  <img src={scene.imageUrl} alt={`Scene ${i + 1}`} className="w-full h-full object-cover" />
+                  <div className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-electric text-void text-[10px] font-bold flex items-center justify-center">
+                    {i + 1}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="aspect-video rounded-lg overflow-hidden bg-slate-dark">
+              <img src={primaryScene?.imageUrl} alt="Selected scene" className="w-full h-full object-cover" />
+            </div>
+          )}
         </div>
 
         {/* Voiceover */}
@@ -335,27 +548,148 @@ function Step4_VideoGenerator() {
           <AudioPlayer src={voiceover?.audioUrl} className="!p-3" />
         </div>
 
-        {/* Script */}
-        <div className="glass-card p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-text-secondary">Script</h3>
-            <button
-              onClick={() => navigate('/step/1')}
-              className="text-xs text-electric hover:text-electric-dim transition-colors"
-            >
-              Edit
-            </button>
+        {/* Script (only in single-scene mode) */}
+        {!isMultiScene && (
+          <div className="glass-card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-text-secondary">Script</h3>
+              <button
+                onClick={() => navigate('/step/1')}
+                className="text-xs text-electric hover:text-electric-dim transition-colors"
+              >
+                Edit
+              </button>
+            </div>
+            <p className="text-sm text-text-primary line-clamp-4">{script}</p>
+            <p className="text-xs text-text-muted mt-2">{script.length} characters</p>
           </div>
-          <p className="text-sm text-text-primary line-clamp-4">
-            {script}
-          </p>
-          <p className="text-xs text-text-muted mt-2">
-            {script.length} characters
-          </p>
-        </div>
+        )}
       </div>
 
-      {/* Video Generation / Preview */}
+      {/* ============ SEGMENT BUILDER (multi-scene only) ============ */}
+      {isMultiScene && !generatedVideo && !isGeneratingVideo && (
+        <div className="glass-card p-6 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-medium text-text-primary">
+              Scene Timeline
+            </h2>
+            <button
+              onClick={handleAutoSplit}
+              className="btn-secondary text-xs"
+            >
+              Auto-split into {selectedScenes.length} segments
+            </button>
+          </div>
+
+          <p className="text-sm text-text-muted mb-4">
+            Split your script into segments and assign a scene to each. Click the split button between sentences to adjust.
+          </p>
+
+          {/* Segment cards */}
+          <div className="space-y-3">
+            {segments.map((segment, segIdx) => {
+              const segSentences = splitIntoSentences(segment.text);
+              const duration = estimateAudioDuration(segment.text);
+              const assignedScene = selectedScenes.find(s => s.id === segment.sceneId);
+
+              return (
+                <div key={segment.id}>
+                  <div className="border border-white/10 rounded-lg p-4 bg-slate-dark/30">
+                    {/* Segment header */}
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-medium text-electric uppercase tracking-wider">
+                        Segment {segIdx + 1}
+                      </span>
+                      <span className="text-xs text-text-muted">
+                        ~{duration}s
+                      </span>
+                    </div>
+
+                    {/* Script text */}
+                    <p className="text-sm text-text-primary mb-3 leading-relaxed">
+                      {segment.text}
+                    </p>
+
+                    {/* Scene selector */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-text-secondary whitespace-nowrap">Scene:</span>
+                      <div className="flex gap-2 flex-wrap">
+                        {selectedScenes.map((scene) => (
+                          <button
+                            key={scene.id}
+                            onClick={() => handleAssignScene(segIdx, scene.id)}
+                            className={`relative w-12 h-12 rounded-lg overflow-hidden border-2 transition-all ${
+                              segment.sceneId === scene.id
+                                ? 'border-electric ring-1 ring-electric/50'
+                                : 'border-white/10 hover:border-white/30'
+                            }`}
+                          >
+                            <img src={scene.imageUrl} alt="" className="w-full h-full object-cover" />
+                            {segment.sceneId === scene.id && (
+                              <div className="absolute inset-0 bg-electric/20 flex items-center justify-center">
+                                <svg className="w-4 h-4 text-electric" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                </svg>
+                              </div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Split actions within segment */}
+                    {segSentences.length > 1 && (
+                      <div className="mt-3 pt-3 border-t border-white/5">
+                        <button
+                          onClick={() => handleAddSplit(segIdx, Math.ceil(segSentences.length / 2))}
+                          className="text-xs text-text-muted hover:text-electric transition-colors flex items-center gap-1"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                          </svg>
+                          Split this segment
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Merge button between segments */}
+                  {segIdx < segments.length - 1 && (
+                    <div className="flex items-center justify-center py-1">
+                      <button
+                        onClick={() => handleRemoveSplit(segIdx)}
+                        className="flex items-center gap-1 px-3 py-1 text-xs text-text-muted hover:text-coral transition-colors rounded-full hover:bg-coral/10"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                        Merge
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Total duration estimate */}
+          <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between">
+            <span className="text-sm text-text-muted">
+              Total estimated duration: ~{segments.reduce((sum, s) => sum + estimateAudioDuration(s.text), 0)}s
+            </span>
+            {!allSegmentsAssigned && (
+              <span className="text-xs text-coral">
+                Assign a scene to every segment to continue
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ============ VIDEO GENERATION / PREVIEW ============ */}
       {!generatedVideo ? (
         <div className="glass-card p-8 text-center mb-8">
           {isGeneratingVideo ? (
@@ -373,12 +707,14 @@ function Step4_VideoGenerator() {
 
               <div>
                 <h3 className="text-lg font-medium text-text-primary mb-2">
-                  Generating Your Video
+                  {isMultiScene ? 'Creating Multi-Scene Video' : 'Generating Your Video'}
                 </h3>
                 <p className="text-text-secondary text-sm">
-                  {chunkInfo
-                    ? `Processing ${chunkInfo.count} segments. This may take ${chunkInfo.estimatedTime}-${chunkInfo.estimatedTime * 1.5} minutes.`
-                    : 'This typically takes 1-3 minutes. Please don\'t close this page.'
+                  {isMultiScene
+                    ? `Processing ${segments.length} segments with transitions. This may take a few minutes.`
+                    : chunkInfo
+                      ? `Processing ${chunkInfo.count} segments. This may take ${chunkInfo.estimatedTime}-${chunkInfo.estimatedTime * 1.5} minutes.`
+                      : 'This typically takes 1-3 minutes. Please don\'t close this page.'
                   }
                 </p>
                 {videoStatusMessage && (
@@ -411,21 +747,30 @@ function Step4_VideoGenerator() {
                 Ready to Generate
               </h3>
               <p className="text-text-secondary mb-6">
-                Your AI clone video will be created using the scene and voiceover above.
+                {isMultiScene
+                  ? `${segments.length} segments with ${selectedScenes.length} different scenes will be stitched with transitions.`
+                  : 'Your AI clone video will be created using the scene and voiceover above.'}
               </p>
 
               <button
                 onClick={handleGenerate}
+                disabled={isMultiScene && !allSegmentsAssigned}
                 className="btn-primary text-lg px-8 py-4"
               >
-                Generate Video
+                {isMultiScene ? 'Generate Multi-Scene Video' : 'Generate Video'}
               </button>
+
+              {isMultiScene && !allSegmentsAssigned && (
+                <p className="text-xs text-coral mt-3">
+                  Please assign a scene to every segment above.
+                </p>
+              )}
             </div>
           )}
         </div>
       ) : (
         <div className="glass-card overflow-hidden mb-8 animate-slide-up">
-          {/* Video Player - full frame portrait video */}
+          {/* Video Player */}
           <div className="max-w-md mx-auto">
             <div className="relative overflow-hidden" style={{ paddingBottom: '177.7%' }}>
               <video
@@ -433,7 +778,7 @@ function Step4_VideoGenerator() {
                 src={generatedVideo.videoUrl}
                 controls
                 className="absolute top-0 left-0 w-full h-full"
-                poster={selectedScene?.imageUrl}
+                poster={primaryScene?.imageUrl}
               >
                 Your browser does not support the video tag.
               </video>
@@ -460,19 +805,20 @@ function Step4_VideoGenerator() {
             </div>
           )}
 
-          {/* Success indicator for stitched video */}
+          {/* Success indicator */}
           {generatedVideo.isStitched && (
             <div className="p-3 bg-green-500/10 border-b border-green-500/30">
               <p className="text-sm text-green-300 flex items-center gap-2">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
-                Successfully combined {generatedVideo.segmentCount} segments
+                {generatedVideo.isMultiScene
+                  ? `Multi-scene video: ${generatedVideo.segmentCount} segments with transitions`
+                  : `Successfully combined ${generatedVideo.segmentCount} segments`}
               </p>
             </div>
           )}
 
-          {/* Video ready notice */}
           <div className="p-3 bg-electric/10 border-b border-electric/30">
             <p className="text-sm text-electric flex items-center gap-2">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

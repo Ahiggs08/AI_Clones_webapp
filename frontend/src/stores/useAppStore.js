@@ -61,9 +61,19 @@ const useAppStore = create((set, get) => ({
   script: '',
   setScript: (script) => set({ script }),
   
-  // ============ SELECTED SCENE ============
-  selectedScene: null,
-  setSelectedScene: (scene) => set({ selectedScene: scene }),
+  // ============ SELECTED SCENES ============
+  selectedScenes: [],
+  addSelectedScene: (scene) => set(state => ({
+    selectedScenes: [...state.selectedScenes, scene]
+  })),
+  removeSelectedScene: (id) => set(state => ({
+    selectedScenes: state.selectedScenes.filter(s => s.id !== id)
+  })),
+  clearSelectedScenes: () => set({ selectedScenes: [] }),
+
+  // ============ SEGMENTS (multi-scene mode) ============
+  segments: [],  // [{ id, text, sceneId }]
+  setSegments: (segments) => set({ segments }),
   
   // ============ VOICEOVER ============
   // voiceover can have: { audioUrl, audioData, voiceId, chunks: [...] }
@@ -92,7 +102,8 @@ const useAppStore = create((set, get) => ({
   reset: () => set({
     currentStep: 1,
     script: '',
-    selectedScene: null,
+    selectedScenes: [],
+    segments: [],
     voiceover: null,
     generatedVideo: null,
     isGeneratingScene: false,
@@ -108,8 +119,8 @@ const useAppStore = create((set, get) => ({
   },
   
   canProceedToStep3: () => {
-    const { selectedScene } = get();
-    return selectedScene !== null;
+    const { selectedScenes } = get();
+    return selectedScenes.length > 0;
   },
   
   canProceedToStep4: () => {
