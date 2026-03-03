@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 import AudioPlayer from '../AudioPlayer';
 import { generateVideo, pollVideoStatus } from '../../utils/api';
-import { stitchVideos, isFFmpegSupported, loadFFmpeg } from '../../utils/videoStitcher';
+import { stitchVideos, isFFmpegSupported } from '../../utils/videoStitcher';
 import { saveProject } from '../../utils/db';
 import useAppStore from '../../stores/useAppStore';
 
@@ -16,8 +16,6 @@ function Step4_VideoGenerator() {
     voiceover,
     generatedVideo,
     setGeneratedVideo,
-    apiKeys,
-    videoProvider,
     setCurrentStep,
     canProceedToStep4,
     isGeneratingVideo,
@@ -29,14 +27,13 @@ function Step4_VideoGenerator() {
     reset
   } = useAppStore();
 
-  const providerLabel = videoProvider === 'kling' ? 'Kling Avatar v2 Pro' : 'HeyGen';
-
   const [isSavingProject, setIsSavingProject] = useState(false);
   const [projectSaved, setProjectSaved] = useState(false);
+  const [isProcessingDownload, setIsProcessingDownload] = useState(false);
 
   useEffect(() => {
     setCurrentStep(4);
-    
+
     if (!canProceedToStep4()) {
       navigate('/step/3');
     }
@@ -49,7 +46,6 @@ function Step4_VideoGenerator() {
     setGeneratedVideo(null);
 
     try {
-      // Check if we have chunked voiceover
       if (voiceover.isChunked && voiceover.chunks && voiceover.chunks.length > 1) {
         await handleChunkedVideoGeneration();
       } else {
@@ -66,35 +62,26 @@ function Step4_VideoGenerator() {
   };
 
   const handleSingleVideoGeneration = async () => {
-    setVideoStatusMessage(`Starting video generation with ${providerLabel}...`);
+    setVideoStatusMessage('Starting video generation...');
 
-    // Send image data (base64) or URL to backend
-    // Prefer base64 data if available (never expires)
     const { jobId } = await generateVideo({
       sceneImageData: selectedScene.imageData || null,
       sceneImageContentType: selectedScene.imageContentType || 'image/png',
       sceneImageUrl: selectedScene.imageData ? null : selectedScene.imageUrl,
       audioData: voiceover.audioData,
-      audioContentType: voiceover.contentType || 'audio/mpeg',
-      heygenApiKey: apiKeys.heygenApiKey,
-      provider: videoProvider
+      audioContentType: voiceover.contentType || 'audio/mpeg'
     });
 
-    setVideoStatusMessage(`Processing with ${providerLabel}...`);
+    setVideoStatusMessage('Processing with Kling Avatar v2 Pro...');
 
     const result = await pollVideoStatus(
       jobId,
-      apiKeys.heygenApiKey,
-      (progress) => setVideoProgress(progress),
-      3000,
-      900000,
-      videoProvider
+      (progress) => setVideoProgress(progress)
     );
 
     setGeneratedVideo({
       videoUrl: result.videoUrl,
       jobId,
-      provider: videoProvider,
       generatedAt: new Date().toISOString()
     });
 
@@ -106,13 +93,12 @@ function Step4_VideoGenerator() {
     const totalChunks = chunks.length;
     const videoUrls = [];
 
-    // Generate video for each chunk (backend fetches image server-side)
     for (let i = 0; i < totalChunks; i++) {
       const chunk = chunks[i];
       const chunkNum = i + 1;
-      
-      setVideoStatusMessage(`Generating segment ${chunkNum}/${totalChunks} with ${providerLabel}...`);
-      setVideoProgress((i / totalChunks) * 60); // 0-60% for video generation
+
+      setVideoStatusMessage(`Generating segment ${chunkNum}/${totalChunks}...`);
+      setVideoProgress((i / totalChunks) * 60);
 
       try {
         const { jobId } = await generateVideo({
@@ -120,24 +106,18 @@ function Step4_VideoGenerator() {
           sceneImageContentType: selectedScene.imageContentType || 'image/png',
           sceneImageUrl: selectedScene.imageData ? null : selectedScene.imageUrl,
           audioData: chunk.audioData,
-          audioContentType: chunk.contentType || 'audio/mpeg',
-          heygenApiKey: apiKeys.heygenApiKey,
-          provider: videoProvider
+          audioContentType: chunk.contentType || 'audio/mpeg'
         });
 
-        setVideoStatusMessage(`Processing segment ${chunkNum}/${totalChunks} with ${providerLabel}...`);
+        setVideoStatusMessage(`Processing segment ${chunkNum}/${totalChunks}...`);
 
         const result = await pollVideoStatus(
           jobId,
-          apiKeys.heygenApiKey,
           (progress) => {
             const baseProgress = (i / totalChunks) * 60;
             const chunkProgress = (progress / 100) * (60 / totalChunks);
             setVideoProgress(baseProgress + chunkProgress);
-          },
-          3000,
-          900000,
-          videoProvider
+          }
         );
 
         if (result.videoUrl) {
@@ -150,7 +130,6 @@ function Step4_VideoGenerator() {
       }
     }
 
-    // Check if we got all videos
     if (videoUrls.length !== totalChunks) {
       throw new Error(`Only ${videoUrls.length} of ${totalChunks} segments completed`);
     }
@@ -159,15 +138,12 @@ function Step4_VideoGenerator() {
     setVideoStatusMessage('Combining video segments...');
     setVideoProgress(65);
 
-    // Check ffmpeg support
     if (!isFFmpegSupported()) {
-      // Fallback: just return the first video with a warning
       toast.error('Your browser does not support video stitching. Showing first segment only.');
       setGeneratedVideo({
         videoUrl: videoUrls[0],
         isPartial: true,
         allVideoUrls: videoUrls,
-        provider: videoProvider,
         generatedAt: new Date().toISOString()
       });
       return;
@@ -175,7 +151,7 @@ function Step4_VideoGenerator() {
 
     try {
       const combinedBlob = await stitchVideos(videoUrls, (progress) => {
-        setVideoProgress(65 + (progress * 0.35)); // 65-100% for stitching
+        setVideoProgress(65 + (progress * 0.35));
       });
 
       const combinedUrl = URL.createObjectURL(combinedBlob);
@@ -185,73 +161,20 @@ function Step4_VideoGenerator() {
         videoBlob: combinedBlob,
         isStitched: true,
         segmentCount: totalChunks,
-        provider: videoProvider,
         generatedAt: new Date().toISOString()
       });
 
       toast.success(`Video generated! Combined ${totalChunks} segments.`);
     } catch (stitchError) {
       console.error('Stitching failed:', stitchError);
-      // Fallback: offer individual downloads
       toast.error('Failed to combine segments. You can download them individually.');
       setGeneratedVideo({
         videoUrl: videoUrls[0],
         isPartial: true,
         allVideoUrls: videoUrls,
-        provider: videoProvider,
         generatedAt: new Date().toISOString()
       });
     }
-  };
-
-  const [isProcessingDownload, setIsProcessingDownload] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
-
-  // Crop video to remove bottom watermark using FFmpeg (outputs MP4)
-  const cropVideoMP4 = async (videoUrl) => {
-    const { fetchFile } = await import('@ffmpeg/util');
-
-    setDownloadProgress(5);
-    const ff = await loadFFmpeg((p) => {
-      setDownloadProgress(5 + Math.round(p * 0.2)); // 5-25% for loading
-    });
-
-    setDownloadProgress(30);
-
-    // Download the video
-    console.log('[Download] Fetching video for cropping...');
-    const videoData = await fetchFile(videoUrl);
-    await ff.writeFile('input.mp4', videoData);
-
-    setDownloadProgress(50);
-
-    // Crop bottom 12% using FFmpeg crop filter
-    // crop=w:h:x:y — keep full width, 88% of height, starting from top-left
-    console.log('[Download] Cropping video with FFmpeg...');
-    await ff.exec([
-      '-i', 'input.mp4',
-      '-vf', 'crop=in_w:in_h*0.88:0:0',
-      '-c:v', 'libx264',
-      '-preset', 'fast',
-      '-crf', '23',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-movflags', '+faststart',
-      'output.mp4'
-    ]);
-
-    setDownloadProgress(90);
-
-    // Read the output
-    const data = await ff.readFile('output.mp4');
-
-    // Clean up
-    await ff.deleteFile('input.mp4');
-    await ff.deleteFile('output.mp4');
-
-    setDownloadProgress(100);
-
-    return new Blob([data.buffer], { type: 'video/mp4' });
   };
 
   const handleDownload = async () => {
@@ -259,32 +182,17 @@ function Step4_VideoGenerator() {
 
     try {
       setIsProcessingDownload(true);
-      setDownloadProgress(0);
+      toast.loading('Downloading video...', { id: 'download-progress' });
 
-      let blob;
-      let filename;
-      const isHeyGen = generatedVideo.provider !== 'kling';
-
-      if (isHeyGen && isFFmpegSupported()) {
-        // HeyGen: crop bottom 12% to remove watermark
-        toast.loading('Processing video as MP4...', { id: 'download-progress' });
-        blob = await cropVideoMP4(generatedVideo.videoUrl);
-        filename = `ai-clone-video-${Date.now()}.mp4`;
-      } else {
-        // Kling: download directly (no watermark to crop)
-        // Also fallback for HeyGen when FFmpeg not supported
-        toast.loading('Downloading video...', { id: 'download-progress' });
-        const response = await fetch(generatedVideo.videoUrl);
-        blob = await response.blob();
-        filename = `ai-clone-video-${Date.now()}.mp4`;
-      }
+      const response = await fetch(generatedVideo.videoUrl);
+      const blob = await response.blob();
 
       toast.dismiss('download-progress');
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = filename;
+      a.download = `ai-clone-video-${Date.now()}.mp4`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -294,26 +202,9 @@ function Step4_VideoGenerator() {
     } catch (error) {
       console.error('Download error:', error);
       toast.dismiss('download-progress');
-      toast.error('Failed to process video. Downloading original...');
-
-      // Fallback to original video without cropping
-      try {
-        const response = await fetch(generatedVideo.videoUrl);
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `ai-clone-video-${Date.now()}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      } catch (fallbackError) {
-        toast.error('Failed to download video');
-      }
+      toast.error('Failed to download video');
     } finally {
       setIsProcessingDownload(false);
-      setDownloadProgress(0);
     }
   };
 
@@ -371,7 +262,7 @@ function Step4_VideoGenerator() {
   // Get chunk info for display
   const chunkInfo = voiceover?.isChunked ? {
     count: voiceover.chunks?.length || 0,
-    estimatedTime: (voiceover.chunks?.length || 1) * 2 // ~2 min per segment
+    estimatedTime: (voiceover.chunks?.length || 1) * 2
   } : null;
 
   return (
@@ -471,7 +362,7 @@ function Step4_VideoGenerator() {
             <div className="space-y-6">
               <div className="w-20 h-20 mx-auto relative">
                 <div className="absolute inset-0 rounded-full border-4 border-slate-medium"></div>
-                <div 
+                <div
                   className="absolute inset-0 rounded-full border-4 border-electric border-t-transparent animate-spin"
                   style={{ animationDuration: '1s' }}
                 ></div>
@@ -479,13 +370,13 @@ function Step4_VideoGenerator() {
                   <div className="w-4 h-4 bg-electric rounded-full animate-pulse"></div>
                 </div>
               </div>
-              
+
               <div>
                 <h3 className="text-lg font-medium text-text-primary mb-2">
                   Generating Your Video
                 </h3>
                 <p className="text-text-secondary text-sm">
-                  {chunkInfo 
+                  {chunkInfo
                     ? `Processing ${chunkInfo.count} segments. This may take ${chunkInfo.estimatedTime}-${chunkInfo.estimatedTime * 1.5} minutes.`
                     : 'This typically takes 1-3 minutes. Please don\'t close this page.'
                   }
@@ -515,15 +406,12 @@ function Step4_VideoGenerator() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </div>
-              
+
               <h3 className="text-xl font-medium text-text-primary mb-2">
                 Ready to Generate
               </h3>
-              <p className="text-text-secondary mb-2">
+              <p className="text-text-secondary mb-6">
                 Your AI clone video will be created using the scene and voiceover above.
-              </p>
-              <p className={`text-xs font-medium mb-6 ${videoProvider === 'kling' ? 'text-violet' : 'text-electric'}`}>
-                Using {providerLabel} {videoProvider === 'kling' ? '• 1080p • 48fps' : '• 720p'}
               </p>
 
               <button
@@ -537,36 +425,19 @@ function Step4_VideoGenerator() {
         </div>
       ) : (
         <div className="glass-card overflow-hidden mb-8 animate-slide-up">
-          {/* Video Player - portrait video */}
+          {/* Video Player - full frame portrait video */}
           <div className="max-w-md mx-auto">
-            {generatedVideo.provider === 'kling' ? (
-              /* Kling: show full video, no watermark crop needed */
-              <div className="relative overflow-hidden" style={{ paddingBottom: '177.7%' }}>
-                <video
-                  id="generated-video"
-                  src={generatedVideo.videoUrl}
-                  controls
-                  className="absolute top-0 left-0 w-full h-full"
-                  poster={selectedScene?.imageUrl}
-                >
-                  Your browser does not support the video tag.
-                </video>
-              </div>
-            ) : (
-              /* HeyGen: crop bottom 12% to hide watermark */
-              <div className="relative overflow-hidden" style={{ paddingBottom: '160%' }}>
-                <video
-                  id="generated-video"
-                  src={generatedVideo.videoUrl}
-                  controls
-                  className="absolute top-0 left-0 w-full"
-                  style={{ height: '112%' }}
-                  poster={selectedScene?.imageUrl}
-                >
-                  Your browser does not support the video tag.
-                </video>
-              </div>
-            )}
+            <div className="relative overflow-hidden" style={{ paddingBottom: '177.7%' }}>
+              <video
+                id="generated-video"
+                src={generatedVideo.videoUrl}
+                controls
+                className="absolute top-0 left-0 w-full h-full"
+                poster={selectedScene?.imageUrl}
+              >
+                Your browser does not support the video tag.
+              </video>
+            </div>
           </div>
 
           {/* Segment downloads if partial */}
@@ -607,7 +478,7 @@ function Step4_VideoGenerator() {
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              Video generated successfully! Preview is optimized for viewing.
+              Video generated successfully!
             </p>
           </div>
 
@@ -622,7 +493,7 @@ function Step4_VideoGenerator() {
                 {isProcessingDownload ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Processing {downloadProgress}%
+                    Downloading...
                   </>
                 ) : (
                   <>

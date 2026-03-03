@@ -110,23 +110,16 @@ export const generateVoiceover = async ({ script, voiceId, elevenLabsApiKey }) =
 // ============ VIDEO GENERATION ============
 
 /**
- * Start video generation
+ * Start video generation (Kling Avatar v2 Pro via kie.ai)
  * @param {Object} params
  * @param {string} params.sceneImageData - Base64 encoded scene image data
  * @param {string} params.sceneImageContentType - MIME type of the scene image
  * @param {string} params.audioData - Base64 encoded audio data
  * @param {string} params.audioContentType - MIME type of the audio
- * @param {string} params.heygenApiKey - HeyGen API key (optional in mock mode)
- * @param {string} params.provider - Video provider: 'heygen' (default) or 'kling'
  */
-export const generateVideo = async ({ sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType, heygenApiKey, provider }) => {
+export const generateVideo = async ({ sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType }) => {
   const response = await api.post('/video/generate',
-    { sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType, provider: provider || 'heygen' },
-    {
-      headers: {
-        ...(heygenApiKey && { 'x-heygen-api-key': heygenApiKey })
-      }
-    }
+    { sceneImageUrl, sceneImageData, sceneImageContentType, audioData, audioContentType }
   );
 
   return response.data.data;
@@ -135,36 +128,26 @@ export const generateVideo = async ({ sceneImageUrl, sceneImageData, sceneImageC
 /**
  * Check video generation status
  * @param {string} jobId - The job ID to check
- * @param {string} heygenApiKey - HeyGen API key (optional)
- * @param {string} provider - Video provider: 'heygen' (default) or 'kling'
  */
-export const checkVideoStatus = async (jobId, heygenApiKey, provider) => {
-  const providerParam = provider ? `?provider=${provider}` : '';
-  const response = await api.get(`/video/status/${jobId}${providerParam}`, {
-    headers: {
-      ...(heygenApiKey && { 'x-heygen-api-key': heygenApiKey })
-    }
-  });
-
+export const checkVideoStatus = async (jobId) => {
+  const response = await api.get(`/video/status/${jobId}`);
   return response.data.data;
 };
 
 /**
  * Poll for video completion
  * @param {string} jobId - The job ID to poll
- * @param {string} heygenApiKey - HeyGen API key
  * @param {Function} onProgress - Progress callback (progress: number)
  * @param {number} interval - Polling interval in ms (default: 3000)
  * @param {number} timeout - Max time to wait in ms (default: 900000 = 15 min)
- * @param {string} provider - Video provider: 'heygen' (default) or 'kling'
  */
-export const pollVideoStatus = async (jobId, heygenApiKey, onProgress, interval = 3000, timeout = 900000, provider) => {
+export const pollVideoStatus = async (jobId, onProgress, interval = 3000, timeout = 900000) => {
   const startTime = Date.now();
 
   return new Promise((resolve, reject) => {
     const poll = async () => {
       try {
-        const status = await checkVideoStatus(jobId, heygenApiKey, provider);
+        const status = await checkVideoStatus(jobId);
 
         if (onProgress && status.progress !== undefined) {
           onProgress(status.progress);
@@ -180,13 +163,11 @@ export const pollVideoStatus = async (jobId, heygenApiKey, onProgress, interval 
           return;
         }
 
-        // Check timeout
         if (Date.now() - startTime > timeout) {
           reject(new Error('Video generation timed out'));
           return;
         }
 
-        // Continue polling
         setTimeout(poll, interval);
       } catch (error) {
         reject(error);
