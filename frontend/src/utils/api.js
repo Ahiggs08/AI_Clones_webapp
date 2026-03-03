@@ -55,17 +55,17 @@ export const checkHealth = async () => {
 /**
  * Generate a new scene image
  * @param {Object} params
- * @param {File} params.referenceImage - Reference image file (optional if using default)
+ * @param {Array} params.referenceImages - Array of { data: base64, contentType } (optional)
  * @param {boolean} params.useDefaultReference - Whether to use the default reference image
  * @param {string} params.prompt - Generation prompt
  * @param {string} params.orientation - 'vertical' or 'horizontal'
  */
-export const generateScene = async ({ referenceImage, useDefaultReference, prompt, orientation }) => {
-  // Send as JSON - the backend uses URL-based references, not file uploads
+export const generateScene = async ({ referenceImages, useDefaultReference, prompt, orientation }) => {
   const response = await api.post('/scene/generate', {
     prompt,
     orientation,
-    useDefaultReference: useDefaultReference ? true : false
+    useDefaultReference: useDefaultReference ? true : false,
+    referenceImages: referenceImages || [] // Array of { data: base64, contentType }
   });
 
   return response.data.data;

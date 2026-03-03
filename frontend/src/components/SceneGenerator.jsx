@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import { v4 as uuidv4 } from 'uuid';
 import toast from 'react-hot-toast';
 import { generateScene } from '../utils/api';
-import { saveScene, saveReferenceImage, getReferenceImage, deleteReferenceImage } from '../utils/db';
+import { saveScene, saveReferenceImages, getReferenceImages, deleteReferenceImages } from '../utils/db';
 import useAppStore from '../stores/useAppStore';
 import PROMPT_CATEGORIES, { getPromptById } from '../data/scenePrompts';
 import { DEFAULT_REFERENCE_IMAGE } from '../data/defaultScenes';
@@ -11,9 +11,8 @@ import { DEFAULT_REFERENCE_IMAGE } from '../data/defaultScenes';
 function SceneGenerator({ onSceneGenerated }) {
   const { apiKeys, isGeneratingScene, setIsGeneratingScene } = useAppStore();
 
-  const [referenceImage, setReferenceImage] = useState(null);
-  const [referencePreview, setReferencePreview] = useState(null);
-  const [referenceFileName, setReferenceFileName] = useState(null);
+  // Multiple reference images
+  const [referenceImages, setReferenceImages] = useState([]); // [{ file, preview, fileName }]
   const [isLoadingReference, setIsLoadingReference] = useState(true);
   const [useDefaultReference, setUseDefaultReference] = useState(true);
   const [prompt, setPrompt] = useState('');
@@ -32,58 +31,100 @@ function SceneGenerator({ onSceneGenerated }) {
     }
   };
 
-  // Load saved reference image on mount
+  // Load saved reference images on mount
   useEffect(() => {
-    const loadSavedReference = async () => {
+    const loadSavedReferences = async () => {
       try {
-        const saved = await getReferenceImage();
-        if (saved && saved.blob) {
-          // User has a custom reference image saved - use it
-          const file = new File([saved.blob], saved.fileName, { type: saved.blob.type });
-          setReferenceImage(file);
-          setReferencePreview(URL.createObjectURL(saved.blob));
-          setReferenceFileName(saved.fileName);
+        const saved = await getReferenceImages();
+        if (saved && saved.length > 0) {
+          const loaded = saved.map(img => ({
+            file: new File([img.blob], img.fileName, { type: img.blob.type }),
+            preview: URL.createObjectURL(img.blob),
+            fileName: img.fileName
+          }));
+          setReferenceImages(loaded);
           setUseDefaultReference(false);
         } else {
-          // No custom image - use default
           setUseDefaultReference(true);
         }
       } catch (error) {
-        console.error('Failed to load saved reference image:', error);
+        console.error('Failed to load saved reference images:', error);
         setUseDefaultReference(true);
       } finally {
         setIsLoadingReference(false);
       }
     };
-    loadSavedReference();
+    loadSavedReferences();
   }, []);
 
   const onDrop = useCallback(async (acceptedFiles) => {
-    const file = acceptedFiles[0];
-    if (file) {
-      setReferenceImage(file);
-      setReferencePreview(URL.createObjectURL(file));
-      setReferenceFileName(file.name);
-      setUseDefaultReference(false);
+    if (acceptedFiles.length === 0) return;
 
-      // Save to IndexedDB for persistence
-      try {
-        await saveReferenceImage(file, file.name);
-        toast.success('Custom reference image saved');
-      } catch (error) {
-        console.error('Failed to save reference image:', error);
-      }
+    const newImages = acceptedFiles.map(file => ({
+      file,
+      preview: URL.createObjectURL(file),
+      fileName: file.name
+    }));
+
+    const updated = [...referenceImages, ...newImages].slice(0, 5); // Max 5 images
+    setReferenceImages(updated);
+    setUseDefaultReference(false);
+
+    // Save to IndexedDB for persistence
+    try {
+      const blobs = updated.map(img => ({ blob: img.file, fileName: img.fileName }));
+      await saveReferenceImages(blobs);
+    } catch (error) {
+      console.error('Failed to save reference images:', error);
     }
-  }, []);
+  }, [referenceImages]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
       'image/*': ['.jpeg', '.jpg', '.png', '.webp']
     },
-    maxFiles: 1,
-    maxSize: 10 * 1024 * 1024 // 10MB
+    maxFiles: 5,
+    maxSize: 10 * 1024 * 1024 // 10MB each
   });
+
+  const removeImage = async (index) => {
+    const updated = referenceImages.filter((_, i) => i !== index);
+    setReferenceImages(updated);
+
+    if (updated.length === 0) {
+      setUseDefaultReference(true);
+      await deleteReferenceImages();
+    } else {
+      const blobs = updated.map(img => ({ blob: img.file, fileName: img.fileName }));
+      await saveReferenceImages(blobs);
+    }
+  };
+
+  // Resize image to max dimension and convert to base64 (keeps payload under Vercel limits)
+  const resizeAndConvertToBase64 = (file, maxDim = 1024) => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const ratio = Math.min(maxDim / width, maxDim / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        resolve(dataUrl.split(',')[1]);
+        URL.revokeObjectURL(img.src);
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
@@ -96,10 +137,24 @@ function SceneGenerator({ onSceneGenerated }) {
     setGeneratedScene(null);
 
     try {
+      // Convert reference images to base64 for the API
+      let refImagesData = [];
+      if (!useDefaultReference && referenceImages.length > 0) {
+        console.log(`[SceneGenerator] Resizing & converting ${referenceImages.length} reference image(s)...`);
+        for (const img of referenceImages) {
+          const data = await resizeAndConvertToBase64(img.file);
+          refImagesData.push({
+            data,
+            contentType: 'image/jpeg' // Always JPEG after resize
+          });
+        }
+      }
+
       console.log('[SceneGenerator] Calling API with prompt:', prompt.trim().substring(0, 50) + '...');
-      console.log('[SceneGenerator] Using default reference:', useDefaultReference);
+      console.log('[SceneGenerator] Reference images:', refImagesData.length, 'useDefault:', useDefaultReference);
+
       const result = await generateScene({
-        referenceImage: useDefaultReference ? null : referenceImage,
+        referenceImages: refImagesData,
         useDefaultReference,
         prompt: prompt.trim(),
         orientation
@@ -121,25 +176,24 @@ function SceneGenerator({ onSceneGenerated }) {
           imageContentType = blob.type || 'image/png';
           imageData = await new Promise((resolve) => {
             const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result.split(',')[1]); // base64 only
+            reader.onloadend = () => resolve(reader.result.split(',')[1]);
             reader.readAsDataURL(blob);
           });
           console.log('[SceneGenerator] Image stored as base64, size:', imageData.length);
         }
       } catch (fetchError) {
         console.warn('[SceneGenerator] Could not fetch image for storage:', fetchError);
-        // Continue without base64 - will use URL as fallback
       }
 
       const scene = {
         id: result.id || uuidv4(),
         imageUrl: result.imageUrl,
-        imageData, // Store base64 data for permanent access
+        imageData,
         imageContentType,
         prompt: prompt.trim(),
         orientation,
         timestamp: Date.now(),
-        referenceImageName: referenceImage?.name || null
+        referenceImageNames: referenceImages.map(img => img.fileName)
       };
 
       // Save to IndexedDB
@@ -168,7 +222,7 @@ function SceneGenerator({ onSceneGenerated }) {
 
   const handleDownload = async () => {
     if (!generatedScene?.imageUrl) return;
-    
+
     try {
       const response = await fetch(generatedScene.imageUrl);
       const blob = await response.blob();
@@ -185,18 +239,14 @@ function SceneGenerator({ onSceneGenerated }) {
     }
   };
 
-  const clearReferenceImage = async () => {
-    setReferenceImage(null);
-    setReferencePreview(null);
-    setReferenceFileName(null);
+  const clearAllReferences = async () => {
+    setReferenceImages([]);
     setUseDefaultReference(true);
-
-    // Remove from IndexedDB
     try {
-      await deleteReferenceImage();
+      await deleteReferenceImages();
       toast.success('Switched to default reference image');
     } catch (error) {
-      console.error('Failed to delete reference image:', error);
+      console.error('Failed to delete reference images:', error);
     }
   };
 
@@ -243,107 +293,119 @@ function SceneGenerator({ onSceneGenerated }) {
         </div>
       </div>
 
-      {/* Reference Image Upload */}
+      {/* Reference Image Upload — Multi-image */}
       <div>
-        <label className="block text-sm font-medium text-text-secondary mb-3">
-          Reference Image
+        <label className="block text-sm font-medium text-text-secondary mb-1">
+          Reference Images
           {useDefaultReference && <span className="text-mint ml-2">(Using Default)</span>}
-          {!useDefaultReference && referencePreview && <span className="text-electric ml-2">(Custom)</span>}
+          {!useDefaultReference && referenceImages.length > 0 && (
+            <span className="text-electric ml-2">({referenceImages.length} Custom)</span>
+          )}
         </label>
+        <p className="text-xs text-text-muted mb-3">
+          Upload photos of the person and/or location to combine them into one scene. Up to 5 images.
+        </p>
+
         {isLoadingReference ? (
           <div className="border-2 border-dashed border-white/10 rounded-lg p-8 text-center">
             <div className="spinner mx-auto mb-3"></div>
-            <p className="text-text-muted text-sm">Loading saved reference...</p>
-          </div>
-        ) : useDefaultReference ? (
-          /* Default Reference Image */
-          <div className="flex items-start gap-4">
-            <div className="relative">
-              <img
-                src={DEFAULT_REFERENCE_IMAGE}
-                alt="Default Reference"
-                className="max-h-48 rounded-lg border-2 border-mint/30"
-              />
-              <div className="absolute top-2 left-2 px-2 py-1 bg-mint/90 text-void text-xs font-medium rounded">
-                Default
-              </div>
-            </div>
-            <div className="flex-1">
-              <p className="text-sm text-text-primary font-medium mb-1">
-                Default Reference Image
-              </p>
-              <p className="text-xs text-text-muted mb-3">
-                Using the default reference image. Upload your own to customize the avatar.
-              </p>
-              <div
-                {...getRootProps()}
-                className="inline-block"
-              >
-                <input {...getInputProps()} />
-                <button className="text-sm text-electric hover:text-electric-dim transition-colors">
-                  Upload custom image
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : !referencePreview ? (
-          <div
-            {...getRootProps()}
-            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all ${
-              isDragActive
-                ? 'border-electric bg-electric/5'
-                : 'border-white/10 hover:border-white/20'
-            }`}
-          >
-            <input {...getInputProps()} />
-            <svg className="w-10 h-10 mx-auto mb-3 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            <p className="text-text-secondary mb-1">
-              {isDragActive ? 'Drop image here' : 'Drag & drop a reference image'}
-            </p>
-            <p className="text-text-muted text-sm">
-              or click to browse (JPEG, PNG, WebP - max 10MB)
-            </p>
+            <p className="text-text-muted text-sm">Loading saved references...</p>
           </div>
         ) : (
-          <div className="flex items-start gap-4">
-            <div className="relative">
-              <img
-                src={referencePreview}
-                alt="Reference"
-                className="max-h-48 rounded-lg border-2 border-electric/30"
-              />
-              <div className="absolute top-2 left-2 px-2 py-1 bg-electric/90 text-void text-xs font-medium rounded">
-                Custom
+          <div className="space-y-3">
+            {/* Uploaded images grid */}
+            {referenceImages.length > 0 && (
+              <div className="flex gap-3 flex-wrap">
+                {referenceImages.map((img, index) => (
+                  <div key={index} className="relative group">
+                    <img
+                      src={img.preview}
+                      alt={img.fileName}
+                      className="w-24 h-24 rounded-lg object-cover border-2 border-electric/30"
+                    />
+                    <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-electric/90 text-void text-[10px] font-medium rounded">
+                      {index + 1}
+                    </div>
+                    <button
+                      onClick={() => removeImage(index)}
+                      className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-coral text-void flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                    <p className="text-[10px] text-text-muted mt-1 truncate w-24">{img.fileName}</p>
+                  </div>
+                ))}
+
+                {/* Add more dropzone (inline) */}
+                {referenceImages.length < 5 && (
+                  <div
+                    {...getRootProps()}
+                    className={`w-24 h-24 rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${
+                      isDragActive
+                        ? 'border-electric bg-electric/5'
+                        : 'border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    <input {...getInputProps()} />
+                    <svg className="w-6 h-6 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    <span className="text-[10px] text-text-muted mt-1">Add</span>
+                  </div>
+                )}
               </div>
+            )}
+
+            {/* Default reference or empty dropzone */}
+            {referenceImages.length === 0 && (
+              <div className="flex items-start gap-4">
+                {useDefaultReference && (
+                  <div className="relative flex-shrink-0">
+                    <img
+                      src={DEFAULT_REFERENCE_IMAGE}
+                      alt="Default Reference"
+                      className="max-h-36 rounded-lg border-2 border-mint/30"
+                    />
+                    <div className="absolute top-2 left-2 px-2 py-1 bg-mint/90 text-void text-xs font-medium rounded">
+                      Default
+                    </div>
+                  </div>
+                )}
+                <div className="flex-1">
+                  <div
+                    {...getRootProps()}
+                    className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-all ${
+                      isDragActive
+                        ? 'border-electric bg-electric/5'
+                        : 'border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    <input {...getInputProps()} />
+                    <svg className="w-8 h-8 mx-auto mb-2 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <p className="text-text-secondary text-sm mb-1">
+                      {isDragActive ? 'Drop images here' : 'Upload reference photos'}
+                    </p>
+                    <p className="text-text-muted text-xs">
+                      Person photo + location photo to combine (JPEG, PNG, WebP)
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Clear all button */}
+            {referenceImages.length > 0 && (
               <button
-                onClick={clearReferenceImage}
-                className="absolute -top-2 -right-2 p-1.5 bg-coral rounded-full text-void hover:bg-coral-dim transition-colors"
-                title="Remove and use default"
+                onClick={clearAllReferences}
+                className="text-xs text-text-muted hover:text-coral transition-colors"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                Remove all &amp; use default
               </button>
-            </div>
-            <div className="flex-1">
-              <p className="text-sm text-text-primary font-medium mb-1">
-                {referenceFileName || 'Custom Reference Image'}
-              </p>
-              <p className="text-xs text-text-muted mb-3">
-                Using your custom reference image. Remove it to switch back to default.
-              </p>
-              <div
-                {...getRootProps()}
-                className="inline-block"
-              >
-                <input {...getInputProps()} />
-                <button className="text-sm text-electric hover:text-electric-dim transition-colors">
-                  Replace image
-                </button>
-              </div>
-            </div>
+            )}
           </div>
         )}
       </div>
@@ -377,7 +439,6 @@ function SceneGenerator({ onSceneGenerated }) {
           value={prompt}
           onChange={(e) => {
             setPrompt(e.target.value);
-            // Clear preset selection if user modifies text
             if (selectedPromptId) {
               setSelectedPromptId('');
             }
@@ -387,7 +448,7 @@ function SceneGenerator({ onSceneGenerated }) {
           rows={6}
         />
         <p className="text-xs text-text-muted mt-2">
-          {selectedPromptId 
+          {selectedPromptId
             ? 'Preset loaded. You can customize it or select a different preset above.'
             : 'Select a preset above or write your own description. Include setting, clothing, lighting, and style.'}
         </p>
@@ -430,7 +491,7 @@ function SceneGenerator({ onSceneGenerated }) {
             <p className="text-sm text-text-secondary line-clamp-2">
               {generatedScene.prompt}
             </p>
-            
+
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={handleUseScene}
@@ -441,7 +502,7 @@ function SceneGenerator({ onSceneGenerated }) {
                 </svg>
                 Use This Scene
               </button>
-              
+
               <button
                 onClick={handleRegenerate}
                 disabled={isGeneratingScene}
@@ -456,7 +517,7 @@ function SceneGenerator({ onSceneGenerated }) {
                 )}
                 Regenerate
               </button>
-              
+
               <button
                 onClick={handleDownload}
                 className="btn-secondary flex items-center justify-center gap-2"
@@ -475,4 +536,3 @@ function SceneGenerator({ onSceneGenerated }) {
 }
 
 export default SceneGenerator;
-

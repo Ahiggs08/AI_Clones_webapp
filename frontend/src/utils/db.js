@@ -225,6 +225,42 @@ export const hasReferenceImage = async () => {
   return !!data;
 };
 
+// ============ MULTI-REFERENCE IMAGES ============
+
+/**
+ * Save multiple reference images
+ * @param {Array} images - Array of { blob, fileName } objects
+ */
+export const saveReferenceImages = async (images) => {
+  const db = await getDB();
+  const data = images.map((img, i) => ({
+    id: `ref-${i}-${Date.now()}`,
+    blob: img.blob,
+    fileName: img.fileName,
+    savedAt: Date.now()
+  }));
+  await db.put('referenceImages', data, 'multi');
+  return data;
+};
+
+/**
+ * Get saved reference images (multi)
+ * @returns {Array} Array of { id, blob, fileName, savedAt }
+ */
+export const getReferenceImages = async () => {
+  const db = await getDB();
+  const data = await db.get('referenceImages', 'multi');
+  return data || [];
+};
+
+/**
+ * Delete all saved reference images (multi)
+ */
+export const deleteReferenceImages = async () => {
+  const db = await getDB();
+  await db.delete('referenceImages', 'multi');
+};
+
 // ============ CLEANUP ============
 
 /**
