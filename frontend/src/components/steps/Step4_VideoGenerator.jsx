@@ -138,6 +138,13 @@ function Step4_VideoGenerator() {
     setSegments(newSegments);
   };
 
+  // Edit segment text directly
+  const handleSegmentTextChange = (segmentIndex, newText) => {
+    const newSegments = [...segments];
+    newSegments[segmentIndex] = { ...newSegments[segmentIndex], text: newText };
+    setSegments(newSegments);
+  };
+
   // Check if all segments have scenes assigned
   const allSegmentsAssigned = segments.length > 0 && segments.every(s => s.sceneId);
 
@@ -582,7 +589,7 @@ function Step4_VideoGenerator() {
           </div>
 
           <p className="text-sm text-text-muted mb-4">
-            Split your script into segments and assign a scene to each. Click the split button between sentences to adjust.
+            Edit the text in each segment and assign a scene to each. Use Auto-split to reset, or Split/Merge to adjust segments.
           </p>
 
           {/* Segment cards */}
@@ -605,10 +612,14 @@ function Step4_VideoGenerator() {
                       </span>
                     </div>
 
-                    {/* Script text */}
-                    <p className="text-sm text-text-primary mb-3 leading-relaxed">
-                      {segment.text}
-                    </p>
+                    {/* Editable script text */}
+                    <textarea
+                      value={segment.text}
+                      onChange={(e) => handleSegmentTextChange(segIdx, e.target.value)}
+                      rows={Math.max(2, Math.ceil(segment.text.length / 80))}
+                      className="w-full text-sm text-text-primary mb-3 leading-relaxed bg-void/50 border border-white/10 rounded-lg p-3 resize-y focus:outline-none focus:border-electric/50 focus:ring-1 focus:ring-electric/30 placeholder-text-muted"
+                      placeholder="Enter the script text for this segment..."
+                    />
 
                     {/* Scene selector */}
                     <div className="flex items-center gap-2">
