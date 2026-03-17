@@ -740,10 +740,10 @@ function Step4_VideoGenerator() {
                 <div className="h-2 bg-slate-medium rounded-full overflow-hidden">
                   <div
                     className="h-full bg-gradient-to-r from-electric to-violet rounded-full transition-all duration-500"
-                    style={{ width: `${videoProgress}%` }}
+                    style={{ width: `${Math.min(100, videoProgress)}%` }}
                   />
                 </div>
-                <p className="text-xs text-text-muted mt-2">{Math.round(videoProgress)}%</p>
+                <p className="text-xs text-text-muted mt-2">{Math.min(100, Math.round(videoProgress))}%</p>
               </div>
             </div>
           ) : (

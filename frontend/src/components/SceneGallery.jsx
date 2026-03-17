@@ -160,7 +160,7 @@ function SceneGallery({ onSelect }) {
                   alt={scene.name || scene.prompt}
                   className="w-full h-full object-cover"
                   onError={(e) => {
-                    e.target.src = 'https://via.placeholder.com/400x300?text=Image+Not+Found';
+                    e.target.style.display = 'none';
                   }}
                 />
 

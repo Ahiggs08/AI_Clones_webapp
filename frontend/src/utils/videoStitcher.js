@@ -203,9 +203,15 @@ export const stitchVideosWithTransitions = async (videoUrls, onProgress, transit
       console.log(`[FFmpeg] Video ${i}: ${dur}s`);
     }
 
-    // Build xfade filter chain
+    // Build xfade filter chain with audio normalization
     if (onProgress) onProgress(40);
     const n = videoUrls.length;
+
+    // First, normalize audio for each input to consistent volume
+    let normFilters = '';
+    for (let i = 0; i < n; i++) {
+      normFilters += `[${i}:a]dynaudnorm=f=150:g=15[anorm${i}];`;
+    }
 
     // Build video xfade chain
     let videoFilter = '';
@@ -228,18 +234,18 @@ export const stitchVideosWithTransitions = async (videoUrls, onProgress, transit
       if (i < n - 2) videoFilter += ';';
     }
 
-    // Build audio acrossfade chain
+    // Build audio acrossfade chain using normalized audio
     cumulativeOffset = 0;
     for (let i = 0; i < n - 1; i++) {
-      const inputA = i === 0 ? `[${i}:a]` : `[a${i}]`;
-      const inputB = `[${i + 1}:a]`;
+      const inputA = i === 0 ? `[anorm${i}]` : `[a${i}]`;
+      const inputB = `[anorm${i + 1}]`;
       const outputLabel = i === n - 2 ? '[aout]' : `[a${i + 1}]`;
 
       audioFilter += `${inputA}${inputB}acrossfade=d=${transitionDuration}${outputLabel}`;
       if (i < n - 2) audioFilter += ';';
     }
 
-    const filterComplex = `${videoFilter};${audioFilter}`;
+    const filterComplex = `${normFilters}${videoFilter};${audioFilter}`;
     console.log('[FFmpeg] Filter complex:', filterComplex);
 
     // Build ffmpeg command
@@ -252,7 +258,7 @@ export const stitchVideosWithTransitions = async (videoUrls, onProgress, transit
     const totalDuration = durations.reduce((sum, d) => sum + d, 0) - (transitionDuration * (n - 1));
     const progressHandler = ({ progress }) => {
       if (onProgress && progress > 0) {
-        onProgress(45 + Math.round(progress * 45)); // 45-90%
+        onProgress(Math.min(90, 45 + Math.round(progress * 45))); // 45-90%, clamped
       }
     };
     ff.on('progress', progressHandler);
