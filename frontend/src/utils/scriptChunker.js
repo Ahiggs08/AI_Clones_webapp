@@ -3,8 +3,8 @@
  * 
  * Based on actual testing:
  * - ElevenLabs generates speech at roughly 15-16 characters per second
- * - HeyGen Avatar IV supports up to 3 minutes (180 seconds) per video
- * - We target 170 seconds to have buffer
+ * - Kling Avatar v2 Pro supports up to 15 seconds per video segment
+ * - For multi-scene mode, each segment generates its own voiceover+video
  * 
  * 170 seconds × 15 chars/second = 2550 characters per chunk
  */

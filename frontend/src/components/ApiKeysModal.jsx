@@ -4,32 +4,26 @@ import useAppStore from '../stores/useAppStore';
 
 /**
  * Required API Keys Modal - Cannot be dismissed until valid keys are entered
+ * Note: Currently unused since API keys are stored as server env vars
+ * (hasRequiredApiKeys always returns true)
  */
 function ApiKeysModal() {
   const { saveSettings } = useAppStore();
-  
-  const [heygenApiKey, setHeygenApiKey] = useState('');
+
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
-  const [showHeygenKey, setShowHeygenKey] = useState(false);
   const [showElevenLabsKey, setShowElevenLabsKey] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errors, setErrors] = useState({});
 
   const validate = () => {
     const newErrors = {};
-    
-    if (!heygenApiKey.trim()) {
-      newErrors.heygenApiKey = 'HeyGen API key is required';
-    } else if (heygenApiKey.trim().length < 10) {
-      newErrors.heygenApiKey = 'API key seems too short';
-    }
-    
+
     if (!elevenLabsApiKey.trim()) {
       newErrors.elevenLabsApiKey = 'ElevenLabs API key is required';
     } else if (elevenLabsApiKey.trim().length < 10) {
       newErrors.elevenLabsApiKey = 'API key seems too short';
     }
-    
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -42,7 +36,6 @@ function ApiKeysModal() {
     setIsSaving(true);
     try {
       await saveSettings({
-        heygenApiKey: heygenApiKey.trim(),
         elevenLabsApiKey: elevenLabsApiKey.trim()
       });
       toast.success('API keys saved! You can now use the app.');
@@ -57,7 +50,7 @@ function ApiKeysModal() {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop - no onClick to close */}
       <div className="absolute inset-0 bg-void/95 backdrop-blur-md" />
-      
+
       {/* Modal */}
       <div className="relative glass-card max-w-lg w-full p-8 animate-slide-up">
         {/* Logo/Icon */}
@@ -75,53 +68,12 @@ function ApiKeysModal() {
             Welcome to AI Clone Video
           </h2>
           <p className="text-text-secondary">
-            To get started, please enter your API keys. These are required to generate scenes, voiceovers, and videos.
+            To get started, please enter your API keys. These are required to generate voiceovers.
           </p>
         </div>
 
         {/* API Key Inputs */}
         <div className="space-y-5 mb-8">
-          {/* HeyGen API Key */}
-          <div>
-            <label className="block text-sm font-medium text-text-primary mb-2">
-              HeyGen API Key <span className="text-coral">*</span>
-            </label>
-            <div className="relative">
-              <input
-                type={showHeygenKey ? 'text' : 'password'}
-                value={heygenApiKey}
-                onChange={(e) => {
-                  setHeygenApiKey(e.target.value);
-                  if (errors.heygenApiKey) setErrors({ ...errors, heygenApiKey: null });
-                }}
-                placeholder="Enter your HeyGen API key"
-                className={`input-field pr-12 ${errors.heygenApiKey ? 'border-coral' : ''}`}
-              />
-              <button
-                type="button"
-                onClick={() => setShowHeygenKey(!showHeygenKey)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
-              >
-                {showHeygenKey ? (
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                  </svg>
-                )}
-              </button>
-            </div>
-            {errors.heygenApiKey && (
-              <p className="text-coral text-sm mt-1">{errors.heygenApiKey}</p>
-            )}
-            <p className="text-xs text-text-muted mt-1">
-              Get your key at <a href="https://heygen.com" target="_blank" rel="noopener noreferrer" className="text-electric hover:underline">heygen.com</a> → Settings → API
-            </p>
-          </div>
-
           {/* ElevenLabs API Key */}
           <div>
             <label className="block text-sm font-medium text-text-primary mb-2">
@@ -193,8 +145,3 @@ function ApiKeysModal() {
 }
 
 export default ApiKeysModal;
-
-
-
-
-

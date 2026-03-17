@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'AICloneVideoDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbInstance = null;
 
@@ -157,7 +157,6 @@ export const getSettings = async () => {
   const db = await getDB();
   const settings = await db.get('settings', 'userSettings');
   return settings || {
-    heygenApiKey: '',
     elevenLabsApiKey: '',
     lastUsedVoiceId: ''
   };

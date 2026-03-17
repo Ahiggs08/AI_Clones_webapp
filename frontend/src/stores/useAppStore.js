@@ -4,7 +4,6 @@ import { getSettings, saveSettings as saveSettingsToDB } from '../utils/db';
 const useAppStore = create((set, get) => ({
   // ============ API KEYS ============
   apiKeys: {
-    heygenApiKey: '',
     elevenLabsApiKey: ''
   },
   
@@ -23,7 +22,6 @@ const useAppStore = create((set, get) => ({
       const settings = await getSettings();
       set({
         apiKeys: {
-          heygenApiKey: settings.heygenApiKey || '',
           elevenLabsApiKey: settings.elevenLabsApiKey || ''
         },
         lastUsedVoiceId: settings.lastUsedVoiceId || '',
@@ -38,7 +36,6 @@ const useAppStore = create((set, get) => ({
   saveSettings: async (newSettings) => {
     const currentState = get();
     const settings = {
-      heygenApiKey: newSettings.heygenApiKey ?? currentState.apiKeys.heygenApiKey,
       elevenLabsApiKey: newSettings.elevenLabsApiKey ?? currentState.apiKeys.elevenLabsApiKey,
       lastUsedVoiceId: newSettings.lastUsedVoiceId ?? currentState.lastUsedVoiceId
     };
@@ -46,7 +43,6 @@ const useAppStore = create((set, get) => ({
     await saveSettingsToDB(settings);
     set({
       apiKeys: {
-        heygenApiKey: settings.heygenApiKey,
         elevenLabsApiKey: settings.elevenLabsApiKey
       },
       lastUsedVoiceId: settings.lastUsedVoiceId
@@ -109,7 +105,8 @@ const useAppStore = create((set, get) => ({
     isGeneratingScene: false,
     isGeneratingVoiceover: false,
     isGeneratingVideo: false,
-    videoProgress: 0
+    videoProgress: 0,
+    videoStatusMessage: ''
   }),
   
   // ============ CAN PROCEED CHECKS ============
